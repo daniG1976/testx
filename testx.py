@@ -1,4 +1,5 @@
 import flet as ft
+from flet import colors # Expliziter Import des 'colors' Moduls, um Fehler zu beheben.
 import httpx
 import json
 import base64
@@ -11,9 +12,6 @@ GOOGLE_API_KEY = "b14b1464c7591bc3a6d7d374c23d80cd971720d228.09.2025"
 GOOGLE_STT_ENDPOINT = f"https://speech.googleapis.com/v1/speech:recognize?key={GOOGLE_API_KEY}"
 # --- Ende Konfiguration ---
 
-# Anpassungen der requirements.txt: Wir brauchen 'httpx', das ist bereits in flet enthalten.
-# requirements.txt ist jetzt überflüssig, aber wir lassen es, da es schon funktioniert.
-
 def main(page: ft.Page):
     page.title = "Flet STT Transcriber V20"
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
@@ -25,20 +23,11 @@ def main(page: ft.Page):
     page.window_width = 400
     page.window_height = 800
 
-    # Da wir ft.Banner direkt in handle_upload_result verwenden, 
-    # sind die alten show_message und hide_message Funktionen nicht mehr nötig
-    # und wurden entfernt, um den Fehler zu beheben.
-
     def stt_from_base64(audio_base64: str) -> str:
         """
         Sendet die Base64-kodierte Audiodatei an die Google Speech-to-Text API.
-        Da wir keine lokale Bibliothek verwenden können, nutzen wir direkt die API.
         """
         
-        # WICHTIG: Die Google API erwartet in der Regel FLAC, LINEAR16 oder MP3. 
-        # Da der Browser typischerweise WebM oder WAV liefert, setzen wir hier 
-        # eine breit unterstützte Config (LINEAR16 mit typischer Rate 44100).
-
         headers = {"Content-Type": "application/json"}
         
         # Annahme: Datei ist WAV (LINEAR16) mit 44100 Hz Sample Rate (typisch für Browser-Aufnahme)
@@ -89,7 +78,7 @@ def main(page: ft.Page):
 
         # 1. Loading State setzen
         status_text.value = "Transkription läuft... Bitte warten."
-        status_text.color = ft.colors.AMBER_400
+        status_text.color = colors.AMBER_400 # Korrigiert
         result_text.value = ""
         transcribe_button.disabled = True
         page.update()
@@ -114,22 +103,22 @@ def main(page: ft.Page):
                 
                 if "API-Fehler" in transcript or "Konnte keine Sprache erkennen" in transcript:
                     status_text.value = "Transkriptionsfehler"
-                    status_text.color = ft.colors.RED_500
+                    status_text.color = colors.RED_500 # Korrigiert
                     # Fehlermeldung als Banner anzeigen
                     page.banner = ft.Banner(
-                        content=ft.Text("Transkription fehlgeschlagen. Prüfen Sie den API-Schlüssel oder das Audioformat.", color=ft.colors.WHITE),
-                        bgcolor=ft.colors.RED_500,
+                        content=ft.Text("Transkription fehlgeschlagen. Prüfen Sie den API-Schlüssel oder das Audioformat.", color=colors.WHITE), # Korrigiert
+                        bgcolor=colors.RED_500, # Korrigiert
                         actions=[ft.TextButton("Schließen", on_click=hide_banner)]
                     )
                     page.open(page.banner)
 
                 else:
                     status_text.value = "Transkription abgeschlossen!"
-                    status_text.color = ft.colors.GREEN_500
+                    status_text.color = colors.GREEN_500 # Korrigiert
                     # Erfolgsmeldung als Banner anzeigen
                     page.banner = ft.Banner(
-                        content=ft.Text("Erfolgreich transkribiert!", color=ft.colors.WHITE),
-                        bgcolor=ft.colors.GREEN_500,
+                        content=ft.Text("Erfolgreich transkribiert!", color=colors.WHITE), # Korrigiert
+                        bgcolor=colors.GREEN_500, # Korrigiert
                         actions=[ft.TextButton("Schließen", on_click=hide_banner)]
                     )
                     page.open(page.banner)
@@ -137,18 +126,18 @@ def main(page: ft.Page):
 
             except Exception as ex:
                 status_text.value = f"Fehler bei der Dateiverarbeitung: {ex}"
-                status_text.color = ft.colors.RED_500
+                status_text.color = colors.RED_500 # Korrigiert
                 result_text.value = "Die Datei konnte nicht gelesen oder verarbeitet werden. Bitte prüfen Sie das Format."
                 page.banner = ft.Banner(
-                    content=ft.Text(f"Kritischer Fehler: {ex}", color=ft.colors.WHITE),
-                    bgcolor=ft.colors.RED_700,
+                    content=ft.Text(f"Kritischer Fehler: {ex}", color=colors.WHITE), # Korrigiert
+                    bgcolor=colors.RED_700, # Korrigiert
                     actions=[ft.TextButton("Schließen", on_click=hide_banner)]
                 )
                 page.open(page.banner)
             
         else:
             status_text.value = "Keine Datei oder Aufnahme ausgewählt."
-            status_text.color = ft.colors.YELLOW_500
+            status_text.color = colors.YELLOW_500 # Korrigiert
 
         # 5. UI zurücksetzen
         transcribe_button.disabled = False
@@ -169,12 +158,12 @@ def main(page: ft.Page):
 
     subtitle_text = ft.Text(
         "Nehmen Sie Audio auf oder wählen Sie eine Datei aus, um eine Transkription zu starten.", 
-        color=ft.colors.WHITE70
+        color=colors.WHITE70 # Korrigiert
     )
 
     status_text = ft.Text(
         "Bereit zum Transkribieren", 
-        color=ft.colors.BLUE_400,
+        color=colors.BLUE_400, # Korrigiert
         size=16,
         weight=ft.FontWeight.W_500
     )
@@ -186,8 +175,8 @@ def main(page: ft.Page):
         read_only=True,
         value="",
         label="Transkriptionsergebnis",
-        border_color=ft.colors.BLUE_GREY_700,
-        bgcolor=ft.colors.BLUE_GREY_900,
+        border_color=colors.BLUE_GREY_700, # Korrigiert
+        bgcolor=colors.BLUE_GREY_900, # Korrigiert
         height=300
     )
 
@@ -214,9 +203,9 @@ def main(page: ft.Page):
                 [
                     title_text,
                     subtitle_text,
-                    ft.Divider(height=30, color=ft.colors.WHITE10),
+                    ft.Divider(height=30, color=colors.WHITE10), # Korrigiert
                     transcribe_button,
-                    ft.Divider(height=30, color=ft.colors.WHITE10),
+                    ft.Divider(height=30, color=colors.WHITE10), # Korrigiert
                     status_text,
                     ft.Container(height=10),
                     result_text,
@@ -226,12 +215,12 @@ def main(page: ft.Page):
             ),
             padding=30,
             border_radius=ft.border_radius.all(15),
-            bgcolor=ft.colors.BLUE_GREY_800,
+            bgcolor=colors.BLUE_GREY_800, # Korrigiert
             width=page.window_width if page.window_width > 400 else 400,
             shadow=ft.BoxShadow(
                 spread_radius=1,
                 blur_radius=10,
-                color=ft.colors.with_opacity(0.2, ft.colors.BLUE_ACCENT_100),
+                color=colors.with_opacity(0.2, colors.BLUE_ACCENT_100), # Korrigiert
                 offset=ft.Offset(0, 0),
             ),
         )
