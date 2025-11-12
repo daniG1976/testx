@@ -1,5 +1,4 @@
-import flet as ft
-from flet import colors # Expliziter Import des 'colors' Moduls, um Fehler zu beheben.
+import flet as ft # Standard-Import
 import httpx
 import json
 import base64
@@ -78,7 +77,7 @@ def main(page: ft.Page):
 
         # 1. Loading State setzen
         status_text.value = "Transkription läuft... Bitte warten."
-        status_text.color = colors.AMBER_400 # Korrigiert
+        status_text.color = ft.Colors.AMBER_400 # Korrigiert auf ft.Colors
         result_text.value = ""
         transcribe_button.disabled = True
         page.update()
@@ -103,22 +102,22 @@ def main(page: ft.Page):
                 
                 if "API-Fehler" in transcript or "Konnte keine Sprache erkennen" in transcript:
                     status_text.value = "Transkriptionsfehler"
-                    status_text.color = colors.RED_500 # Korrigiert
+                    status_text.color = ft.Colors.RED_500 # Korrigiert auf ft.Colors
                     # Fehlermeldung als Banner anzeigen
                     page.banner = ft.Banner(
-                        content=ft.Text("Transkription fehlgeschlagen. Prüfen Sie den API-Schlüssel oder das Audioformat.", color=colors.WHITE), # Korrigiert
-                        bgcolor=colors.RED_500, # Korrigiert
+                        content=ft.Text("Transkription fehlgeschlagen. Prüfen Sie den API-Schlüssel oder das Audioformat.", color=ft.Colors.WHITE), # Korrigiert auf ft.Colors
+                        bgcolor=ft.Colors.RED_500, # Korrigiert auf ft.Colors
                         actions=[ft.TextButton("Schließen", on_click=hide_banner)]
                     )
                     page.open(page.banner)
 
                 else:
                     status_text.value = "Transkription abgeschlossen!"
-                    status_text.color = colors.GREEN_500 # Korrigiert
+                    status_text.color = ft.Colors.GREEN_500 # Korrigiert auf ft.Colors
                     # Erfolgsmeldung als Banner anzeigen
                     page.banner = ft.Banner(
-                        content=ft.Text("Erfolgreich transkribiert!", color=colors.WHITE), # Korrigiert
-                        bgcolor=colors.GREEN_500, # Korrigiert
+                        content=ft.Text("Erfolgreich transkribiert!", color=ft.Colors.WHITE), # Korrigiert auf ft.Colors
+                        bgcolor=ft.Colors.GREEN_500, # Korrigiert auf ft.Colors
                         actions=[ft.TextButton("Schließen", on_click=hide_banner)]
                     )
                     page.open(page.banner)
@@ -126,18 +125,18 @@ def main(page: ft.Page):
 
             except Exception as ex:
                 status_text.value = f"Fehler bei der Dateiverarbeitung: {ex}"
-                status_text.color = colors.RED_500 # Korrigiert
+                status_text.color = ft.Colors.RED_500 # Korrigiert auf ft.Colors
                 result_text.value = "Die Datei konnte nicht gelesen oder verarbeitet werden. Bitte prüfen Sie das Format."
                 page.banner = ft.Banner(
-                    content=ft.Text(f"Kritischer Fehler: {ex}", color=colors.WHITE), # Korrigiert
-                    bgcolor=colors.RED_700, # Korrigiert
+                    content=ft.Text(f"Kritischer Fehler: {ex}", color=ft.Colors.WHITE), # Korrigiert auf ft.Colors
+                    bgcolor=ft.Colors.RED_700, # Korrigiert auf ft.Colors
                     actions=[ft.TextButton("Schließen", on_click=hide_banner)]
                 )
                 page.open(page.banner)
             
         else:
             status_text.value = "Keine Datei oder Aufnahme ausgewählt."
-            status_text.color = colors.YELLOW_500 # Korrigiert
+            status_text.color = ft.Colors.YELLOW_500 # Korrigiert auf ft.Colors
 
         # 5. UI zurücksetzen
         transcribe_button.disabled = False
@@ -158,12 +157,12 @@ def main(page: ft.Page):
 
     subtitle_text = ft.Text(
         "Nehmen Sie Audio auf oder wählen Sie eine Datei aus, um eine Transkription zu starten.", 
-        color=colors.WHITE70 # Korrigiert
+        color=ft.Colors.WHITE70 # Korrigiert auf ft.Colors
     )
 
     status_text = ft.Text(
         "Bereit zum Transkribieren", 
-        color=colors.BLUE_400, # Korrigiert
+        color=ft.Colors.BLUE_400, # Korrigiert auf ft.Colors
         size=16,
         weight=ft.FontWeight.W_500
     )
@@ -175,14 +174,14 @@ def main(page: ft.Page):
         read_only=True,
         value="",
         label="Transkriptionsergebnis",
-        border_color=colors.BLUE_GREY_700, # Korrigiert
-        bgcolor=colors.BLUE_GREY_900, # Korrigiert
+        border_color=ft.Colors.BLUE_GREY_700, # Korrigiert auf ft.Colors
+        bgcolor=ft.Colors.BLUE_GREY_900, # Korrigiert auf ft.Colors
         height=300
     )
 
     transcribe_button = ft.FilledButton(
         content=ft.Row([
-            ft.Icon(ft.icons.MIC_SHARP, size=24),
+            ft.Icon(ft.Icons.MIC_SHARP, size=24), # Korrigiert auf ft.Icons
             ft.Text("Audio auswählen oder Neu-Aufnahme", size=18)
         ]),
         on_click=lambda _: file_picker.pick_files(
@@ -203,9 +202,9 @@ def main(page: ft.Page):
                 [
                     title_text,
                     subtitle_text,
-                    ft.Divider(height=30, color=colors.WHITE10), # Korrigiert
+                    ft.Divider(height=30, color=ft.Colors.WHITE10), # Korrigiert auf ft.Colors
                     transcribe_button,
-                    ft.Divider(height=30, color=colors.WHITE10), # Korrigiert
+                    ft.Divider(height=30, color=ft.Colors.WHITE10), # Korrigiert auf ft.Colors
                     status_text,
                     ft.Container(height=10),
                     result_text,
@@ -215,12 +214,12 @@ def main(page: ft.Page):
             ),
             padding=30,
             border_radius=ft.border_radius.all(15),
-            bgcolor=colors.BLUE_GREY_800, # Korrigiert
+            bgcolor=ft.Colors.BLUE_GREY_800, # Korrigiert auf ft.Colors
             width=page.window_width if page.window_width > 400 else 400,
             shadow=ft.BoxShadow(
                 spread_radius=1,
                 blur_radius=10,
-                color=colors.with_opacity(0.2, colors.BLUE_ACCENT_100), # Korrigiert
+                color=ft.Colors.with_opacity(0.2, ft.Colors.BLUE_ACCENT_100), # Korrigiert auf ft.Colors
                 offset=ft.Offset(0, 0),
             ),
         )
