@@ -8,15 +8,11 @@ import base64
 app = Flask(__name__)
 
 # --- API Konfiguration ---
-# Hinweis: Für ein echtes Produkt müssten Sie einen Google Cloud Speech-to-Text API Key 
 GOOGLE_API_KEY = "b14b1464c7591bc3a6d7d374c23d80cd971720d228.09.2025"
 GOOGLE_STT_ENDPOINT = f"https://speech.googleapis.com/v1/speech:recognize?key={GOOGLE_API_KEY}"
 # --- Ende Konfiguration ---
 
-# Wir müssen die index.html direkt in Python einbinden, da wir Render nicht dazu zwingen können,
-# das /templates-Verzeichnis zu verwenden.
-# Achtung: Flask erwartet, dass HTML-Dateien in einem 'templates' Ordner liegen. 
-# Da das Hosting auf Render so einfach wie möglich sein soll, betten wir den HTML-Inhalt direkt ein.
+# Wir embedden den korrigierten HTML/JS-Inhalt
 HTML_CONTENT = """
 <!DOCTYPE html>
 <html lang="de">
@@ -38,13 +34,13 @@ HTML_CONTENT = """
             Direkter Mikrofonzugriff (WebRTC) – **Backend in Python**.
         </p>
         <div id="status-container" class="mb-6 p-4 rounded-lg text-center font-mono transition duration-300 bg-gray-700">
-            <p id="status-text" class="text-lg text-yellow-300">Warten auf Mikrofonberechtigung...</p>
+            <p id="status-text" class="text-lg text-yellow-300">Bereit. Klicken Sie auf Aufnahme starten.</p>
         </div>
         <div class="flex flex-col space-y-4">
             <button id="record-button" 
                     class="flex items-center justify-center space-x-2 px-6 py-3 text-lg font-semibold rounded-lg shadow-lg 
-                           bg-green-600 hover:bg-green-700 transition duration-150 disabled:opacity-50"
-                    disabled>
+                           bg-green-600 hover:bg-green-700 transition duration-150"
+                    >
                 <svg id="record-icon" class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
                     <path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd" />
                 </svg>
@@ -80,9 +76,9 @@ HTML_CONTENT = """
         const base64Size = document.getElementById('base64-size');
         const statusContainer = document.getElementById('status-container');
 
-        let mediaRecorder;
+        let mediaRecorder = null;
         let audioChunks = [];
-        let stream;
+        let stream = null; // Stream ist initial null
 
         // --- HILFSFUNKTIONEN ---
 
@@ -107,12 +103,10 @@ HTML_CONTENT = """
                 const data = await response.json();
 
                 if (response.ok) {
-                    // Erfolgreiche Transkription vom Python-Backend
                     const transcript = data.transcript;
                     resultText.value = transcript;
-                    updateStatus("Transkription abgeschlossen!", 'text-green-500', 'bg-green-900');
+                    updateStatus("Transkription abgeschlossen!", 'text-green-400', 'bg-green-900');
                 } else {
-                    // Fehler vom Python-Backend
                     const errorMessage = data.error || "Unbekannter Fehler im Python-Backend.";
                     resultText.value = `Fehler: ${errorMessage}`;
                     updateStatus("API-Fehler", 'text-red-500', 'bg-red-900');
@@ -122,41 +116,55 @@ HTML_CONTENT = """
                 resultText.value = `Netzwerkfehler: Konnte Python-Backend nicht erreichen. (${error.message})`;
                 updateStatus("Netzwerkfehler", 'text-red-500', 'bg-red-900');
             }
+            
+            // WICHTIG: Setzt den Stream zurück, damit die nächste Aufnahme funktioniert
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null; 
+            }
+            recordButton.disabled = false;
         }
 
         // --- WEBRTC LOGIK ---
 
-        function startRecording() {
-            if (!stream) {
-                updateStatus("Fehler: Mikrofon-Stream nicht verfügbar.", 'text-red-500', 'bg-red-900');
-                return;
-            }
-            
-            mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-            audioChunks = [];
-            
-            mediaRecorder.ondataavailable = event => {
-                audioChunks.push(event.data);
-            };
-
-            mediaRecorder.onstop = () => {
-                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-                const reader = new FileReader();
-                
-                reader.onloadend = () => {
-                    const base64Audio = reader.result.split(',')[1];
-                    
-                    base64Size.textContent = `Base64-Größe: ${Math.round(base64Audio.length / 1024)} KB (WebM/OPUS)`;
-
-                    transcribeAudio(base64Audio);
-                };
-                reader.readAsDataURL(audioBlob);
-            };
-
-            mediaRecorder.start();
-            updateStatus("Aufnahme läuft... (Klicken Sie auf Stopp)", 'text-red-500', 'bg-red-900');
+        async function startRecording() {
+            // Deaktiviert den Button sofort, um Mehrfachklicks zu verhindern
             recordButton.disabled = true;
-            stopButton.disabled = false;
+
+            try {
+                // 1. Mikrofon-Berechtigung (Lazy-Loading)
+                updateStatus("Warten auf Mikrofon-Zugriff...", 'text-yellow-300', 'bg-gray-700');
+                stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+                // 2. MediaRecorder initialisieren und starten
+                mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+                audioChunks = [];
+                
+                mediaRecorder.ondataavailable = event => {
+                    audioChunks.push(event.data);
+                };
+
+                mediaRecorder.onstop = () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                    const reader = new FileReader();
+                    
+                    reader.onloadend = () => {
+                        const base64Audio = reader.result.split(',')[1];
+                        base64Size.textContent = `Base64-Größe: ${Math.round(base64Audio.length / 1024)} KB (WebM/OPUS)`;
+                        transcribeAudio(base64Audio);
+                    };
+                    reader.readAsDataURL(audioBlob);
+                };
+
+                mediaRecorder.start();
+                updateStatus("Aufnahme läuft... (Klicken Sie auf Stopp)", 'text-red-500', 'bg-red-900');
+                stopButton.disabled = false; // Stopp-Button wird aktiviert
+                
+            } catch (err) {
+                console.error("Fehler beim Zugriff auf das Mikrofon: ", err);
+                updateStatus("Zugriff auf Mikrofon verweigert. Bitte Berechtigungen prüfen.", 'text-red-500', 'bg-red-900');
+                recordButton.disabled = false; // Aufnahme-Button wird wieder aktiviert
+            }
         }
 
         function stopRecording() {
@@ -164,28 +172,18 @@ HTML_CONTENT = """
                 mediaRecorder.stop();
             }
             stopButton.disabled = true;
-            recordButton.disabled = false;
+            updateStatus("Aufnahme beendet. Verarbeite...", 'text-yellow-300', 'bg-gray-700');
+            // recordButton wird erst nach erfolgreicher Transkription wieder aktiviert
         }
 
         // --- INITIALISIERUNG ---
-
-        async function initRecorder() {
-            try {
-                stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                updateStatus("Mikrofon bereit. Aufnahme starten.", 'text-green-400', 'bg-gray-700');
-                recordButton.disabled = false;
-                
-                recordButton.addEventListener('click', startRecording);
-                stopButton.addEventListener('click', stopRecording);
-
-            } catch (err) {
-                console.error("Fehler beim Zugriff auf das Mikrofon: ", err);
-                updateStatus("Zugriff auf Mikrofon verweigert. Bitte Berechtigungen prüfen.", 'text-red-500', 'bg-red-900');
-                recordButton.disabled = true;
-            }
+        
+        // Füge Event-Listener direkt hinzu, da wir initRecorder entfernt haben
+        window.onload = function() {
+            recordButton.addEventListener('click', startRecording);
+            stopButton.addEventListener('click', stopRecording);
         }
 
-        window.onload = initRecorder;
     </script>
 </body>
 </html>
@@ -194,17 +192,15 @@ HTML_CONTENT = """
 def stt_from_base64(audio_base64: str) -> dict:
     """
     Sendet die Base64-kodierte Audiodatei an die Google Speech-to-Text API.
-    Gibt ein Diktat mit 'transcript' und 'error' zurück. (Ihre Flet-Logik)
     """
     
     headers = {"Content-Type": "application/json"}
     
-    # WICHTIG: WebRTC liefert WebM/OPUS. Wir müssen die Konfiguration anpassen.
-    # Hier verwenden wir WEBM_OPUS als Codierung, da der Browser dieses Format liefert.
+    # Konfiguration für das WEBM_OPUS Format (vom Browser geliefert)
     request_data = {
         "config": {
             "encoding": "WEBM_OPUS",
-            "sampleRateHertz": 48000, # Typische SampleRate für WebM/OPUS
+            "sampleRateHertz": 48000, 
             "languageCode": "de-DE", 
             "enableAutomaticPunctuation": True,
         },
@@ -235,7 +231,7 @@ def stt_from_base64(audio_base64: str) -> dict:
 
 @app.route('/')
 def index():
-    """Liefert das HTML-Frontend mit der WebRTC-Logik."""
+    """Liefert das HTML-Frontend mit der korrigierten WebRTC-Logik."""
     return render_template_string(HTML_CONTENT)
 
 @app.route('/transcribe', methods=['POST'])
