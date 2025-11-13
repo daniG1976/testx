@@ -8,14 +8,13 @@ import base64
 app = Flask(__name__)
 
 # --- API Konfiguration ---
-# WICHTIG: Ersetzen Sie diesen Platzhalter-Wert durch Ihren ECHTEN Google API Key.
-# Wenn dieser Wert nicht geändert wird, kann KEINE Transkription erfolgen!
-GOOGLE_API_KEY = "IHR_ECHTER_GOOGLE_API_KEY_HIER_EINFÜGEN" 
+# Lese den API Key aus den Umgebungsvariablen (Der saubere Weg).
+# WICHTIG: Render muss eine Umgebungsvariable GOOGLE_API_KEY enthalten.
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 
-# Überprüfen, ob der API Key gültig ist (verhindert Absturz)
-API_KEY_VALID = GOOGLE_API_KEY != "IHR_ECHTER_GOOGLE_API_KEY_HIER_EINFÜGEN"
+# Überprüfung: Ist der Key vorhanden (nicht None) und nicht leer
+API_KEY_VALID = GOOGLE_API_KEY is not None and GOOGLE_API_KEY.strip() != ""
 
-# Setze den Endpunkt nur, wenn der Schlüssel gültig ist
 GOOGLE_STT_ENDPOINT = f"https://speech.googleapis.com/v1/speech:recognize?key={GOOGLE_API_KEY}"
 # --- Ende Konfiguration ---
 
@@ -81,14 +80,15 @@ HTML_CONTENT = f"""
         const resultText = document.getElementById('result-text');
         const base64Size = document.getElementById('base64-size');
         const statusContainer = document.getElementById('status-container');
-        // Holen Sie den API Key Status vom Backend
+        
+        // HINWEIS: API-Status vom Python-Backend übernommen.
         const apiKeyValid = {"{'true' if API_KEY_VALID else 'false'}"}; 
 
         let mediaRecorder = null;
         let audioChunks = [];
         let stream = null; 
 
-        // Hilfsfunktion: Stream beenden und alle Tracks stoppen
+        // Hilfsfunktionen (wie gehabt)
         function stopStream(currentStream) {{
             if (currentStream) {{
                 currentStream.getTracks().forEach(track => {{
@@ -103,13 +103,12 @@ HTML_CONTENT = f"""
             statusText.className = colorClass;
         }}
         
-        // Initialisierungscheck
-        window.onload = function() {{
+        // Initialisierung (sofort nach Laden des Scripts)
+        (function initApp() {{
             recordButton.addEventListener('click', startRecording);
             stopButton.addEventListener('click', stopRecording);
             
             if (apiKeyValid === 'false') {{
-                // Wenn der Key fehlt, warnen und den Aufnahme-Button aktivieren
                 updateStatus(
                     "ACHTUNG: API-SCHLÜSSEL FEHLT! Transkription ist inaktiv.", 
                     'text-yellow-400', 
@@ -118,14 +117,13 @@ HTML_CONTENT = f"""
             }} else {{
                  updateStatus("Bereit. Klicken Sie auf Aufnahme starten.", 'text-green-400', 'bg-gray-700');
             }}
-        }}
+        }})();
 
 
         async function transcribeAudio(base64Audio) {{
-            // Überprüfung des API Keys vor dem Senden an das Backend
             if (apiKeyValid === 'false') {{
                 updateStatus("Transkription blockiert: API-Schlüssel fehlt.", 'text-red-500', 'bg-red-900');
-                resultText.value = "Fehler: Bitte den Google API Key in der app.py oder in Render's Umgebungsvariablen setzen.";
+                resultText.value = "Fehler: Bitte den Google API Key in Render's Umgebungsvariablen setzen.";
                 stopStream(stream);
                 stream = null;
                 recordButton.disabled = false;
@@ -170,6 +168,8 @@ HTML_CONTENT = f"""
 
             try {{
                 updateStatus("Warten auf Mikrofon-Zugriff...", 'text-yellow-300', 'bg-gray-700');
+                
+                // --- KRITISCHE STELLE FÜR iOS ---
                 stream = await navigator.mediaDevices.getUserMedia({{ audio: true }});
 
                 mediaRecorder = new MediaRecorder(stream, {{ mimeType: 'audio/webm' }});
@@ -185,7 +185,7 @@ HTML_CONTENT = f"""
                     if (audioChunks.length === 0) {{
                         updateStatus("Aufnahme zu kurz oder leer. Versuchen Sie es erneut.", 'text-red-500', 'bg-red-900');
                         recordButton.disabled = false;
-                        stopStream(stream); // Muss hier beendet werden
+                        stopStream(stream); 
                         stream = null;
                         return;
                     }}
@@ -205,6 +205,7 @@ HTML_CONTENT = f"""
                 stopButton.disabled = false; 
                 
             }} catch (err) {{
+                // Dies ist der Block, der beim Fehler "Zugriff auf Mikrofon verweigert" ausgeführt wird.
                 console.error("Mikrofon Fehler: ", err);
                 
                 stopStream(stream);
