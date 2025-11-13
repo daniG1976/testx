@@ -8,13 +8,13 @@ import base64
 app = Flask(__name__)
 
 # --- API Konfiguration ---
-# Lese den API Key aus den Umgebungsvariablen (Der saubere Weg).
-# WICHTIG: Render muss eine Umgebungsvariable GOOGLE_API_KEY enthalten.
+# Lese den API Key aus den Umgebungsvariablen von Render
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 
 # Überprüfung: Ist der Key vorhanden (nicht None) und nicht leer
 API_KEY_VALID = GOOGLE_API_KEY is not None and GOOGLE_API_KEY.strip() != ""
 
+# API Endpunkt (wird nur verwendet, wenn der Key gültig ist)
 GOOGLE_STT_ENDPOINT = f"https://speech.googleapis.com/v1/speech:recognize?key={GOOGLE_API_KEY}"
 # --- Ende Konfiguration ---
 
@@ -36,9 +36,6 @@ HTML_CONTENT = f"""
         <h1 class="text-3xl font-bold text-center text-blue-400 mb-2">
             🎙️ Audio Recorder & Transcriber
         </h1>
-        <p class="text-center text-gray-400 mb-6">
-            Direkter Mikrofonzugriff (WebRTC) – **Backend in Python**.
-        </p>
         <div id="status-container" class="mb-6 p-4 rounded-lg text-center font-mono transition duration-300 bg-gray-700">
             <p id="status-text" class="text-lg text-green-400">Status wird geladen...</p>
         </div>
@@ -88,7 +85,7 @@ HTML_CONTENT = f"""
         let audioChunks = [];
         let stream = null; 
 
-        // Hilfsfunktionen (wie gehabt)
+        // Hilfsfunktionen 
         function stopStream(currentStream) {{
             if (currentStream) {{
                 currentStream.getTracks().forEach(track => {{
@@ -103,8 +100,8 @@ HTML_CONTENT = f"""
             statusText.className = colorClass;
         }}
         
-        // Initialisierung (sofort nach Laden des Scripts)
-        (function initApp() {{
+        // ** GEÄNDERTE INITIALISIERUNG: Führt die Logik aus, sobald das DOM bereit ist. **
+        document.addEventListener('DOMContentLoaded', function() {{
             recordButton.addEventListener('click', startRecording);
             stopButton.addEventListener('click', stopRecording);
             
@@ -114,10 +111,12 @@ HTML_CONTENT = f"""
                     'text-yellow-400', 
                     'bg-red-800'
                 );
+                recordButton.disabled = true;
             }} else {{
                  updateStatus("Bereit. Klicken Sie auf Aufnahme starten.", 'text-green-400', 'bg-gray-700');
             }}
-        }})();
+        }});
+        // ** ENDE GEÄNDERTE INITIALISIERUNG **
 
 
         async function transcribeAudio(base64Audio) {{
@@ -170,6 +169,7 @@ HTML_CONTENT = f"""
                 updateStatus("Warten auf Mikrofon-Zugriff...", 'text-yellow-300', 'bg-gray-700');
                 
                 // --- KRITISCHE STELLE FÜR iOS ---
+                // Hier wird der Mikrofon-Zugriff angefordert.
                 stream = await navigator.mediaDevices.getUserMedia({{ audio: true }});
 
                 mediaRecorder = new MediaRecorder(stream, {{ mimeType: 'audio/webm' }});
@@ -205,7 +205,7 @@ HTML_CONTENT = f"""
                 stopButton.disabled = false; 
                 
             }} catch (err) {{
-                // Dies ist der Block, der beim Fehler "Zugriff auf Mikrofon verweigert" ausgeführt wird.
+                // Dieser Block fängt alle Fehler beim Mikrofon-Zugriff (z.B. fehlende Berechtigung, kein Mikrofon gefunden)
                 console.error("Mikrofon Fehler: ", err);
                 
                 stopStream(stream);
