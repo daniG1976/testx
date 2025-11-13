@@ -8,14 +8,19 @@ import base64
 app = Flask(__name__)
 
 # --- API Konfiguration ---
-# HINWEIS: Dies ist der Platzhalter-API-Schlüssel, der in der Umgebung des Canvas zur Verfügung steht.
-# In Ihrer echten App müssten Sie den Schlüssel sicher in Umgebungsvariablen speichern.
-GOOGLE_API_KEY = "b14b1464c7591bc3a6d7d374c23d80cd971720d228.09.2025"
+# WICHTIG: Ersetzen Sie diesen Platzhalter-Wert durch Ihren ECHTEN Google API Key.
+# Wenn dieser Wert nicht geändert wird, kann KEINE Transkription erfolgen!
+GOOGLE_API_KEY = "IHR_ECHTER_GOOGLE_API_KEY_HIER_EINFÜGEN" 
+
+# Überprüfen, ob der API Key gültig ist (verhindert Absturz)
+API_KEY_VALID = GOOGLE_API_KEY != "IHR_ECHTER_GOOGLE_API_KEY_HIER_EINFÜGEN"
+
+# Setze den Endpunkt nur, wenn der Schlüssel gültig ist
 GOOGLE_STT_ENDPOINT = f"https://speech.googleapis.com/v1/speech:recognize?key={GOOGLE_API_KEY}"
 # --- Ende Konfiguration ---
 
 # Wir embedden den HTML/JS-Inhalt direkt.
-HTML_CONTENT = """
+HTML_CONTENT = f"""
 <!DOCTYPE html>
 <html lang="de">
 <head>
@@ -24,7 +29,7 @@ HTML_CONTENT = """
     <title>WebRTC Audio Recorder & Transcriber</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { font-family: 'Inter', sans-serif; }
+        body {{ font-family: 'Inter', sans-serif; }}
     </style>
 </head>
 <body class="bg-gray-900 text-white min-h-screen flex items-center justify-center p-4">
@@ -36,7 +41,7 @@ HTML_CONTENT = """
             Direkter Mikrofonzugriff (WebRTC) – **Backend in Python**.
         </p>
         <div id="status-container" class="mb-6 p-4 rounded-lg text-center font-mono transition duration-300 bg-gray-700">
-            <p id="status-text" class="text-lg text-green-400">Bereit. Klicken Sie auf Aufnahme starten.</p>
+            <p id="status-text" class="text-lg text-green-400">Status wird geladen...</p>
         </div>
         <div class="flex flex-col space-y-4">
             <button id="record-button" 
@@ -68,7 +73,7 @@ HTML_CONTENT = """
         </div>
     </div>
     <script>
-        // *** Frontend-Logik: Aufnahme, Base64-Kodierung & Senden an Python-Backend ***
+        // *** Frontend-Logik ***
         
         const statusText = document.getElementById('status-text');
         const recordButton = document.getElementById('record-button');
@@ -76,137 +81,154 @@ HTML_CONTENT = """
         const resultText = document.getElementById('result-text');
         const base64Size = document.getElementById('base64-size');
         const statusContainer = document.getElementById('status-container');
+        // Holen Sie den API Key Status vom Backend
+        const apiKeyValid = {"{'true' if API_KEY_VALID else 'false'}"}; 
 
         let mediaRecorder = null;
         let audioChunks = [];
         let stream = null; 
 
         // Hilfsfunktion: Stream beenden und alle Tracks stoppen
-        function stopStream(currentStream) {
-            if (currentStream) {
-                currentStream.getTracks().forEach(track => {
+        function stopStream(currentStream) {{
+            if (currentStream) {{
+                currentStream.getTracks().forEach(track => {{
                     track.stop();
-                });
-            }
-        }
+                }});
+            }}
+        }}
 
-        function updateStatus(message, colorClass = 'text-green-400', bgClass = 'bg-gray-700') {
+        function updateStatus(message, colorClass = 'text-green-400', bgClass = 'bg-gray-700') {{
             statusText.textContent = message;
-            statusContainer.className = `mb-6 p-4 rounded-lg text-center font-mono transition duration-300 ${bgClass}`;
+            statusContainer.className = `mb-6 p-4 rounded-lg text-center font-mono transition duration-300 ${{bgClass}}`;
             statusText.className = colorClass;
-        }
+        }}
+        
+        // Initialisierungscheck
+        window.onload = function() {{
+            recordButton.addEventListener('click', startRecording);
+            stopButton.addEventListener('click', stopRecording);
+            
+            if (apiKeyValid === 'false') {{
+                // Wenn der Key fehlt, warnen und den Aufnahme-Button aktivieren
+                updateStatus(
+                    "ACHTUNG: API-SCHLÜSSEL FEHLT! Transkription ist inaktiv.", 
+                    'text-yellow-400', 
+                    'bg-red-800'
+                );
+            }} else {{
+                 updateStatus("Bereit. Klicken Sie auf Aufnahme starten.", 'text-green-400', 'bg-gray-700');
+            }}
+        }}
 
-        async function transcribeAudio(base64Audio) {
+
+        async function transcribeAudio(base64Audio) {{
+            // Überprüfung des API Keys vor dem Senden an das Backend
+            if (apiKeyValid === 'false') {{
+                updateStatus("Transkription blockiert: API-Schlüssel fehlt.", 'text-red-500', 'bg-red-900');
+                resultText.value = "Fehler: Bitte den Google API Key in der app.py oder in Render's Umgebungsvariablen setzen.";
+                stopStream(stream);
+                stream = null;
+                recordButton.disabled = false;
+                return;
+            }}
+            
             updateStatus("Transkription läuft...", 'text-amber-400', 'bg-blue-900');
             resultText.value = "Sende Audio an Python-Backend zur Verarbeitung...";
 
-            try {
-                const response = await fetch('/transcribe', {
+            try {{
+                const response = await fetch('/transcribe', {{
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ audio_base64: base64Audio })
-                });
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{ audio_base64: base64Audio }})
+                }});
 
                 const data = await response.json();
 
-                if (response.ok) {
+                if (response.ok) {{
                     const transcript = data.transcript;
                     resultText.value = transcript;
                     updateStatus("Transkription abgeschlossen!", 'text-green-400', 'bg-green-900');
-                } else {
+                }} else {{
                     const errorMessage = data.error || "Unbekannter Fehler im Python-Backend.";
-                    resultText.value = `Fehler: ${errorMessage}`;
+                    resultText.value = `Fehler: ${{errorMessage}}`;
                     updateStatus("API-Fehler", 'text-red-500', 'bg-red-900');
-                }
+                }}
                 
-            } catch (error) {
-                resultText.value = `Netzwerkfehler: Konnte Python-Backend nicht erreichen. (${error.message})`;
+            }} catch (error) {{
+                resultText.value = `Netzwerkfehler: Konnte Python-Backend nicht erreichen. (${{error.message}})`;
                 updateStatus("Netzwerkfehler", 'text-red-500', 'bg-red-900');
-            }
+            }}
             
-            // Stream beenden, falls er noch aktiv ist (Sicherheitsnetz)
             stopStream(stream);
             stream = null; 
             recordButton.disabled = false;
-        }
+        }}
 
-        async function startRecording() {
-            // Button deaktivieren, um nur eine Aufnahme zur Zeit zu erlauben
+        async function startRecording() {{
             recordButton.disabled = true;
-            stopButton.disabled = true; // Stopp-Button deaktiviert, bis die Aufnahme läuft
+            stopButton.disabled = true; 
 
-            try {
+            try {{
                 updateStatus("Warten auf Mikrofon-Zugriff...", 'text-yellow-300', 'bg-gray-700');
-                
-                // 1. Berechtigung anfordern und Stream abrufen (Lazy-Loading)
-                stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                stream = await navigator.mediaDevices.getUserMedia({{ audio: true }});
 
-                // 2. MediaRecorder initialisieren
-                // Wir verwenden 'audio/webm' (OPUS), das auf iOS/Safari gut unterstützt wird
-                mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+                mediaRecorder = new MediaRecorder(stream, {{ mimeType: 'audio/webm' }});
                 audioChunks = [];
                 
-                mediaRecorder.ondataavailable = event => { 
-                    if (event.data.size > 0) {
+                mediaRecorder.ondataavailable = event => {{ 
+                    if (event.data.size > 0) {{
                         audioChunks.push(event.data); 
-                    }
-                };
+                    }}
+                }};
 
-                mediaRecorder.onstop = () => {
-                    if (audioChunks.length === 0) {
+                mediaRecorder.onstop = () => {{
+                    if (audioChunks.length === 0) {{
                         updateStatus("Aufnahme zu kurz oder leer. Versuchen Sie es erneut.", 'text-red-500', 'bg-red-900');
                         recordButton.disabled = false;
+                        stopStream(stream); // Muss hier beendet werden
+                        stream = null;
                         return;
-                    }
-                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                    }}
+                    const audioBlob = new Blob(audioChunks, {{ type: 'audio/webm' }});
                     const reader = new FileReader();
                     
-                    reader.onloadend = () => {
+                    reader.onloadend = () => {{
                         const base64Audio = reader.result.split(',')[1];
-                        base64Size.textContent = `Base64-Größe: ${Math.round(base64Audio.length / 1024)} KB (WebM/OPUS)`;
+                        base64Size.textContent = `Base64-Größe: ${{Math.round(base64Audio.length / 1024)}} KB (WebM/OPUS)`;
                         transcribeAudio(base64Audio);
-                    };
+                    }};
                     reader.readAsDataURL(audioBlob);
-                };
+                }};
 
-                // 3. Aufnahme starten
                 mediaRecorder.start();
                 updateStatus("Aufnahme läuft... (Klicken Sie auf Stopp)", 'text-red-500', 'bg-red-900');
-                stopButton.disabled = false; // Stopp-Button aktivieren, da der Stream läuft
+                stopButton.disabled = false; 
                 
-            } catch (err) {
-                // Fehlerbehandlung
+            }} catch (err) {{
                 console.error("Mikrofon Fehler: ", err);
                 
-                // Stream beenden und Status zurücksetzen
                 stopStream(stream);
                 stream = null; 
                 
                 let errorMessage = "Zugriff auf Mikrofon verweigert. Bitte Berechtigungen prüfen.";
-                if (err.name === 'NotAllowedError') {
+                if (err.name === 'NotAllowedError') {{
                     errorMessage = "Zugriff verweigert (NotAllowedError). Einstellungen prüfen!";
-                } else if (err.name === 'NotFoundError') {
+                }} else if (err.name === 'NotFoundError') {{
                     errorMessage = "Kein Mikrofon gefunden (NotFoundError).";
-                }
+                }}
                 
                 updateStatus(errorMessage, 'text-red-500', 'bg-red-900');
                 recordButton.disabled = false; 
-            }
-        }
+            }}
+        }}
 
-        function stopRecording() {
-            if (mediaRecorder && mediaRecorder.state === 'recording') {
+        function stopRecording() {{
+            if (mediaRecorder && mediaRecorder.state === 'recording') {{
                 mediaRecorder.stop();
-            }
+            }}
             stopButton.disabled = true;
             updateStatus("Aufnahme beendet. Verarbeite...", 'text-yellow-300', 'bg-gray-700');
-            // recordButton bleibt deaktiviert, bis die Transkription abgeschlossen ist (siehe transcribeAudio)
-        }
-
-        window.onload = function() {
-            recordButton.addEventListener('click', startRecording);
-            stopButton.addEventListener('click', stopRecording);
-        }
+        }}
 
     </script>
 </body>
@@ -218,10 +240,11 @@ def stt_from_base64(audio_base64: str) -> dict:
     Sendet die Base64-kodierte Audiodatei an die Google Speech-to-Text API.
     """
     
+    if not API_KEY_VALID:
+        return {"error": "API Key nicht konfiguriert oder Platzhalterwert verwendet."}
+    
     headers = {"Content-Type": "application/json"}
     
-    # WEBM_OPUS ist das Standardformat, das von MediaRecorder in den meisten modernen Browsern, 
-    # einschließlich Safari auf iOS, erzeugt wird.
     request_data = {
         "config": {
             "encoding": "WEBM_OPUS",
@@ -244,7 +267,7 @@ def stt_from_base64(audio_base64: str) -> dict:
             transcript = result['results'][0]['alternatives'][0]['transcript']
             return {"transcript": transcript}
         elif 'error' in result:
-            return {"error": f"API-Fehler: {result['error'].get('message', 'Unbekannt')}"}
+            return {"error": f"Google API Fehler: {result['error'].get('message', 'Unbekannt')}"}
         else:
             return {"error": "Konnte keine Sprache erkennen (Zu leise oder zu kurz)."}
         
