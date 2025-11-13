@@ -1,0 +1,264 @@
+import os
+import json
+from flask import Flask, request, jsonify, render_template_string
+import httpx
+import base64
+
+# Initialisiere die Flask App
+app = Flask(__name__)
+
+# --- API Konfiguration ---
+# Hinweis: Für ein echtes Produkt müssten Sie einen Google Cloud Speech-to-Text API Key 
+GOOGLE_API_KEY = "b14b1464c7591bc3a6d7d374c23d80cd971720d228.09.2025"
+GOOGLE_STT_ENDPOINT = f"https://speech.googleapis.com/v1/speech:recognize?key={GOOGLE_API_KEY}"
+# --- Ende Konfiguration ---
+
+# Wir müssen die index.html direkt in Python einbinden, da wir Render nicht dazu zwingen können,
+# das /templates-Verzeichnis zu verwenden.
+# Achtung: Flask erwartet, dass HTML-Dateien in einem 'templates' Ordner liegen. 
+# Da das Hosting auf Render so einfach wie möglich sein soll, betten wir den HTML-Inhalt direkt ein.
+HTML_CONTENT = """
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC Audio Recorder & Transcriber</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen flex items-center justify-center p-4">
+    <div class="w-full max-w-md bg-gray-800 rounded-xl shadow-2xl p-6 md:p-8">
+        <h1 class="text-3xl font-bold text-center text-blue-400 mb-2">
+            🎙️ Audio Recorder & Transcriber
+        </h1>
+        <p class="text-center text-gray-400 mb-6">
+            Direkter Mikrofonzugriff (WebRTC) – **Backend in Python**.
+        </p>
+        <div id="status-container" class="mb-6 p-4 rounded-lg text-center font-mono transition duration-300 bg-gray-700">
+            <p id="status-text" class="text-lg text-yellow-300">Warten auf Mikrofonberechtigung...</p>
+        </div>
+        <div class="flex flex-col space-y-4">
+            <button id="record-button" 
+                    class="flex items-center justify-center space-x-2 px-6 py-3 text-lg font-semibold rounded-lg shadow-lg 
+                           bg-green-600 hover:bg-green-700 transition duration-150 disabled:opacity-50"
+                    disabled>
+                <svg id="record-icon" class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd" />
+                </svg>
+                <span id="record-label">Aufnahme starten</span>
+            </button>
+            <button id="stop-button" 
+                    class="flex items-center justify-center space-x-2 px-6 py-3 text-lg font-semibold rounded-lg shadow-lg 
+                           bg-red-600 hover:bg-red-700 transition duration-150 disabled:opacity-50"
+                    disabled>
+                <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M5 4a1 1 0 00-1 1v10a1 1 0 001 1h10a1 1 0 001-1V5a1 1 0 00-1-1H5z" />
+                </svg>
+                Aufnahme stoppen
+            </button>
+        </div>
+        <div class="mt-8">
+            <h2 class="text-xl font-semibold mb-3 text-gray-300">Transkriptionsergebnis</h2>
+            <textarea id="result-text" readonly 
+                      class="w-full h-40 p-3 rounded-lg bg-gray-900 border border-gray-700 text-gray-200 resize-none 
+                             focus:border-blue-500 transition duration-150"
+                      placeholder="Transkription wird hier angezeigt..."></textarea>
+            <p id="base64-size" class="text-xs text-gray-500 mt-2">Base64-Größe: 0 Bytes</p>
+        </div>
+    </div>
+    <script>
+        // *** Frontend-Logik: Aufnahme, Base64-Kodierung & Senden an Python-Backend ***
+        
+        // Konstanten für UI-Elemente
+        const statusText = document.getElementById('status-text');
+        const recordButton = document.getElementById('record-button');
+        const stopButton = document.getElementById('stop-button');
+        const resultText = document.getElementById('result-text');
+        const base64Size = document.getElementById('base64-size');
+        const statusContainer = document.getElementById('status-container');
+
+        let mediaRecorder;
+        let audioChunks = [];
+        let stream;
+
+        // --- HILFSFUNKTIONEN ---
+
+        function updateStatus(message, colorClass = 'text-yellow-300', bgClass = 'bg-gray-700') {
+            statusText.textContent = message;
+            statusContainer.className = `mb-6 p-4 rounded-lg text-center font-mono transition duration-300 ${bgClass}`;
+            statusText.className = colorClass;
+        }
+
+        async function transcribeAudio(base64Audio) {
+            updateStatus("Transkription läuft...", 'text-amber-400', 'bg-blue-900');
+            resultText.value = "Sende Audio an Python-Backend zur Verarbeitung...";
+
+            try {
+                // Sendet die Base64-Audiodaten an den Flask-Endpunkt
+                const response = await fetch('/transcribe', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ audio_base64: base64Audio })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    // Erfolgreiche Transkription vom Python-Backend
+                    const transcript = data.transcript;
+                    resultText.value = transcript;
+                    updateStatus("Transkription abgeschlossen!", 'text-green-500', 'bg-green-900');
+                } else {
+                    // Fehler vom Python-Backend
+                    const errorMessage = data.error || "Unbekannter Fehler im Python-Backend.";
+                    resultText.value = `Fehler: ${errorMessage}`;
+                    updateStatus("API-Fehler", 'text-red-500', 'bg-red-900');
+                }
+                
+            } catch (error) {
+                resultText.value = `Netzwerkfehler: Konnte Python-Backend nicht erreichen. (${error.message})`;
+                updateStatus("Netzwerkfehler", 'text-red-500', 'bg-red-900');
+            }
+        }
+
+        // --- WEBRTC LOGIK ---
+
+        function startRecording() {
+            if (!stream) {
+                updateStatus("Fehler: Mikrofon-Stream nicht verfügbar.", 'text-red-500', 'bg-red-900');
+                return;
+            }
+            
+            mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+            audioChunks = [];
+            
+            mediaRecorder.ondataavailable = event => {
+                audioChunks.push(event.data);
+            };
+
+            mediaRecorder.onstop = () => {
+                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                const reader = new FileReader();
+                
+                reader.onloadend = () => {
+                    const base64Audio = reader.result.split(',')[1];
+                    
+                    base64Size.textContent = `Base64-Größe: ${Math.round(base64Audio.length / 1024)} KB (WebM/OPUS)`;
+
+                    transcribeAudio(base64Audio);
+                };
+                reader.readAsDataURL(audioBlob);
+            };
+
+            mediaRecorder.start();
+            updateStatus("Aufnahme läuft... (Klicken Sie auf Stopp)", 'text-red-500', 'bg-red-900');
+            recordButton.disabled = true;
+            stopButton.disabled = false;
+        }
+
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+            }
+            stopButton.disabled = true;
+            recordButton.disabled = false;
+        }
+
+        // --- INITIALISIERUNG ---
+
+        async function initRecorder() {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                updateStatus("Mikrofon bereit. Aufnahme starten.", 'text-green-400', 'bg-gray-700');
+                recordButton.disabled = false;
+                
+                recordButton.addEventListener('click', startRecording);
+                stopButton.addEventListener('click', stopRecording);
+
+            } catch (err) {
+                console.error("Fehler beim Zugriff auf das Mikrofon: ", err);
+                updateStatus("Zugriff auf Mikrofon verweigert. Bitte Berechtigungen prüfen.", 'text-red-500', 'bg-red-900');
+                recordButton.disabled = true;
+            }
+        }
+
+        window.onload = initRecorder;
+    </script>
+</body>
+</html>
+"""
+
+def stt_from_base64(audio_base64: str) -> dict:
+    """
+    Sendet die Base64-kodierte Audiodatei an die Google Speech-to-Text API.
+    Gibt ein Diktat mit 'transcript' und 'error' zurück. (Ihre Flet-Logik)
+    """
+    
+    headers = {"Content-Type": "application/json"}
+    
+    # WICHTIG: WebRTC liefert WebM/OPUS. Wir müssen die Konfiguration anpassen.
+    # Hier verwenden wir WEBM_OPUS als Codierung, da der Browser dieses Format liefert.
+    request_data = {
+        "config": {
+            "encoding": "WEBM_OPUS",
+            "sampleRateHertz": 48000, # Typische SampleRate für WebM/OPUS
+            "languageCode": "de-DE", 
+            "enableAutomaticPunctuation": True,
+        },
+        "audio": {
+            "content": audio_base64
+        }
+    }
+
+    try:
+        response = httpx.post(GOOGLE_STT_ENDPOINT, headers=headers, json=request_data, timeout=30)
+        response.raise_for_status() 
+
+        result = response.json()
+        
+        if result and 'results' in result and result['results']:
+            transcript = result['results'][0]['alternatives'][0]['transcript']
+            return {"transcript": transcript}
+        elif 'error' in result:
+            return {"error": f"API-Fehler: {result['error'].get('message', 'Unbekannt')}"}
+        else:
+            return {"error": "Konnte keine Sprache erkennen (Zu leise oder zu kurz)."}
+        
+    except httpx.RequestError as e:
+        return {"error": f"Verbindungsfehler zur Google API: {e}"}
+    except Exception as e:
+        return {"error": f"Unerwarteter Fehler während der Transkription: {e}"}
+
+
+@app.route('/')
+def index():
+    """Liefert das HTML-Frontend mit der WebRTC-Logik."""
+    return render_template_string(HTML_CONTENT)
+
+@app.route('/transcribe', methods=['POST'])
+def transcribe_endpoint():
+    """Endpunkt, der die Base64-Audiodaten vom Frontend empfängt."""
+    try:
+        data = request.get_json()
+        if not data or 'audio_base64' not in data:
+            return jsonify({"error": "Fehlende Base64-Audiodaten"}), 400
+        
+        audio_base64 = data['audio_base64']
+        
+        result = stt_from_base64(audio_base64)
+        
+        if "error" in result:
+            return jsonify({"error": result["error"]}), 500
+        else:
+            return jsonify({"transcript": result["transcript"]})
+
+    except Exception as e:
+        app.logger.error(f"Backend-Fehler: {e}")
+        return jsonify({"error": "Interner Serverfehler während der Verarbeitung"}), 500
+
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port, debug=True)
