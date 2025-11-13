@@ -8,11 +8,13 @@ import base64
 app = Flask(__name__)
 
 # --- API Konfiguration ---
+# HINWEIS: Dies ist der Platzhalter-API-Schlüssel, der in der Umgebung des Canvas zur Verfügung steht.
+# In Ihrer echten App müssten Sie den Schlüssel sicher in Umgebungsvariablen speichern.
 GOOGLE_API_KEY = "b14b1464c7591bc3a6d7d374c23d80cd971720d228.09.2025"
 GOOGLE_STT_ENDPOINT = f"https://speech.googleapis.com/v1/speech:recognize?key={GOOGLE_API_KEY}"
 # --- Ende Konfiguration ---
 
-# Wir embedden den korrigierten HTML/JS-Inhalt
+# Wir embedden den HTML/JS-Inhalt direkt.
 HTML_CONTENT = """
 <!DOCTYPE html>
 <html lang="de">
@@ -34,7 +36,7 @@ HTML_CONTENT = """
             Direkter Mikrofonzugriff (WebRTC) – **Backend in Python**.
         </p>
         <div id="status-container" class="mb-6 p-4 rounded-lg text-center font-mono transition duration-300 bg-gray-700">
-            <p id="status-text" class="text-lg text-yellow-300">Bereit. Klicken Sie auf Aufnahme starten.</p>
+            <p id="status-text" class="text-lg text-green-400">Bereit. Klicken Sie auf Aufnahme starten.</p>
         </div>
         <div class="flex flex-col space-y-4">
             <button id="record-button" 
@@ -68,7 +70,6 @@ HTML_CONTENT = """
     <script>
         // *** Frontend-Logik: Aufnahme, Base64-Kodierung & Senden an Python-Backend ***
         
-        // Konstanten für UI-Elemente
         const statusText = document.getElementById('status-text');
         const recordButton = document.getElementById('record-button');
         const stopButton = document.getElementById('stop-button');
@@ -78,11 +79,18 @@ HTML_CONTENT = """
 
         let mediaRecorder = null;
         let audioChunks = [];
-        let stream = null; // Stream ist initial null
+        let stream = null; 
 
-        // --- HILFSFUNKTIONEN ---
+        // Hilfsfunktion: Stream beenden und alle Tracks stoppen
+        function stopStream(currentStream) {
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => {
+                    track.stop();
+                });
+            }
+        }
 
-        function updateStatus(message, colorClass = 'text-yellow-300', bgClass = 'bg-gray-700') {
+        function updateStatus(message, colorClass = 'text-green-400', bgClass = 'bg-gray-700') {
             statusText.textContent = message;
             statusContainer.className = `mb-6 p-4 rounded-lg text-center font-mono transition duration-300 ${bgClass}`;
             statusText.className = colorClass;
@@ -93,7 +101,6 @@ HTML_CONTENT = """
             resultText.value = "Sende Audio an Python-Backend zur Verarbeitung...";
 
             try {
-                // Sendet die Base64-Audiodaten an den Flask-Endpunkt
                 const response = await fetch('/transcribe', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -117,34 +124,40 @@ HTML_CONTENT = """
                 updateStatus("Netzwerkfehler", 'text-red-500', 'bg-red-900');
             }
             
-            // WICHTIG: Setzt den Stream zurück, damit die nächste Aufnahme funktioniert
-            if (stream) {
-                stream.getTracks().forEach(track => track.stop());
-                stream = null; 
-            }
+            // Stream beenden, falls er noch aktiv ist (Sicherheitsnetz)
+            stopStream(stream);
+            stream = null; 
             recordButton.disabled = false;
         }
 
-        // --- WEBRTC LOGIK ---
-
         async function startRecording() {
-            // Deaktiviert den Button sofort, um Mehrfachklicks zu verhindern
+            // Button deaktivieren, um nur eine Aufnahme zur Zeit zu erlauben
             recordButton.disabled = true;
+            stopButton.disabled = true; // Stopp-Button deaktiviert, bis die Aufnahme läuft
 
             try {
-                // 1. Mikrofon-Berechtigung (Lazy-Loading)
                 updateStatus("Warten auf Mikrofon-Zugriff...", 'text-yellow-300', 'bg-gray-700');
+                
+                // 1. Berechtigung anfordern und Stream abrufen (Lazy-Loading)
                 stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-                // 2. MediaRecorder initialisieren und starten
+                // 2. MediaRecorder initialisieren
+                // Wir verwenden 'audio/webm' (OPUS), das auf iOS/Safari gut unterstützt wird
                 mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
                 audioChunks = [];
                 
-                mediaRecorder.ondataavailable = event => {
-                    audioChunks.push(event.data);
+                mediaRecorder.ondataavailable = event => { 
+                    if (event.data.size > 0) {
+                        audioChunks.push(event.data); 
+                    }
                 };
 
                 mediaRecorder.onstop = () => {
+                    if (audioChunks.length === 0) {
+                        updateStatus("Aufnahme zu kurz oder leer. Versuchen Sie es erneut.", 'text-red-500', 'bg-red-900');
+                        recordButton.disabled = false;
+                        return;
+                    }
                     const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
                     const reader = new FileReader();
                     
@@ -156,14 +169,28 @@ HTML_CONTENT = """
                     reader.readAsDataURL(audioBlob);
                 };
 
+                // 3. Aufnahme starten
                 mediaRecorder.start();
                 updateStatus("Aufnahme läuft... (Klicken Sie auf Stopp)", 'text-red-500', 'bg-red-900');
-                stopButton.disabled = false; // Stopp-Button wird aktiviert
+                stopButton.disabled = false; // Stopp-Button aktivieren, da der Stream läuft
                 
             } catch (err) {
-                console.error("Fehler beim Zugriff auf das Mikrofon: ", err);
-                updateStatus("Zugriff auf Mikrofon verweigert. Bitte Berechtigungen prüfen.", 'text-red-500', 'bg-red-900');
-                recordButton.disabled = false; // Aufnahme-Button wird wieder aktiviert
+                // Fehlerbehandlung
+                console.error("Mikrofon Fehler: ", err);
+                
+                // Stream beenden und Status zurücksetzen
+                stopStream(stream);
+                stream = null; 
+                
+                let errorMessage = "Zugriff auf Mikrofon verweigert. Bitte Berechtigungen prüfen.";
+                if (err.name === 'NotAllowedError') {
+                    errorMessage = "Zugriff verweigert (NotAllowedError). Einstellungen prüfen!";
+                } else if (err.name === 'NotFoundError') {
+                    errorMessage = "Kein Mikrofon gefunden (NotFoundError).";
+                }
+                
+                updateStatus(errorMessage, 'text-red-500', 'bg-red-900');
+                recordButton.disabled = false; 
             }
         }
 
@@ -173,12 +200,9 @@ HTML_CONTENT = """
             }
             stopButton.disabled = true;
             updateStatus("Aufnahme beendet. Verarbeite...", 'text-yellow-300', 'bg-gray-700');
-            // recordButton wird erst nach erfolgreicher Transkription wieder aktiviert
+            // recordButton bleibt deaktiviert, bis die Transkription abgeschlossen ist (siehe transcribeAudio)
         }
 
-        // --- INITIALISIERUNG ---
-        
-        // Füge Event-Listener direkt hinzu, da wir initRecorder entfernt haben
         window.onload = function() {
             recordButton.addEventListener('click', startRecording);
             stopButton.addEventListener('click', stopRecording);
@@ -196,7 +220,8 @@ def stt_from_base64(audio_base64: str) -> dict:
     
     headers = {"Content-Type": "application/json"}
     
-    # Konfiguration für das WEBM_OPUS Format (vom Browser geliefert)
+    # WEBM_OPUS ist das Standardformat, das von MediaRecorder in den meisten modernen Browsern, 
+    # einschließlich Safari auf iOS, erzeugt wird.
     request_data = {
         "config": {
             "encoding": "WEBM_OPUS",
