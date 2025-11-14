@@ -36,6 +36,9 @@ HTML_CONTENT = f"""
         <h1 class="text-3xl font-bold text-center text-blue-400 mb-2">
             🎙️ Audio Recorder & Transcriber
         </h1>
+        <p class="text-center text-gray-400 mb-6">
+            Direkter Mikrofonzugriff (WebRTC) – **Backend in Python**.
+        </p>
         <div id="status-container" class="mb-6 p-4 rounded-lg text-center font-mono transition duration-300 bg-gray-700">
             <p id="status-text" class="text-lg text-green-400">Status wird geladen...</p>
         </div>
@@ -100,8 +103,9 @@ HTML_CONTENT = f"""
             statusText.className = colorClass;
         }}
         
-        // ** GEÄNDERTE INITIALISIERUNG: Führt die Logik aus, sobald das DOM bereit ist. **
-        document.addEventListener('DOMContentLoaded', function() {{
+        // ** KORREKTUR: Robuste, sofortige Initialisierung außerhalb jedes Events **
+        // Führt die Logik aus, sobald das Skript geladen ist (was bei inlined JS sofort passiert).
+        (function initApp() {{
             recordButton.addEventListener('click', startRecording);
             stopButton.addEventListener('click', stopRecording);
             
@@ -115,8 +119,8 @@ HTML_CONTENT = f"""
             }} else {{
                  updateStatus("Bereit. Klicken Sie auf Aufnahme starten.", 'text-green-400', 'bg-gray-700');
             }}
-        }});
-        // ** ENDE GEÄNDERTE INITIALISIERUNG **
+        }})();
+        // ** ENDE KORREKTUR **
 
 
         async function transcribeAudio(base64Audio) {{
@@ -125,7 +129,7 @@ HTML_CONTENT = f"""
                 resultText.value = "Fehler: Bitte den Google API Key in Render's Umgebungsvariablen setzen.";
                 stopStream(stream);
                 stream = null;
-                recordButton.disabled = false;
+                recordButton.disabled = true; // Bleibt disabled, da Key fehlt
                 return;
             }}
             
@@ -162,14 +166,15 @@ HTML_CONTENT = f"""
         }}
 
         async function startRecording() {{
+            if (recordButton.disabled) return;
+            
             recordButton.disabled = true;
             stopButton.disabled = true; 
 
             try {{
                 updateStatus("Warten auf Mikrofon-Zugriff...", 'text-yellow-300', 'bg-gray-700');
                 
-                // --- KRITISCHE STELLE FÜR iOS ---
-                // Hier wird der Mikrofon-Zugriff angefordert.
+                // Hier erfolgt die eigentliche Mikrofon-Anfrage, ausgelöst durch den Klick
                 stream = await navigator.mediaDevices.getUserMedia({{ audio: true }});
 
                 mediaRecorder = new MediaRecorder(stream, {{ mimeType: 'audio/webm' }});
@@ -205,7 +210,7 @@ HTML_CONTENT = f"""
                 stopButton.disabled = false; 
                 
             }} catch (err) {{
-                // Dieser Block fängt alle Fehler beim Mikrofon-Zugriff (z.B. fehlende Berechtigung, kein Mikrofon gefunden)
+                // Dieser Block fängt alle Fehler beim Mikrofon-Zugriff
                 console.error("Mikrofon Fehler: ", err);
                 
                 stopStream(stream);
