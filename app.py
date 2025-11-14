@@ -9,7 +9,9 @@ app = Flask(__name__)
 
 # --- API Konfiguration ---
 # Lese den API Key aus den Umgebungsvariablen von Render
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
+# !!! ACHTUNG: TEMPORÄRER HARDCODE ZUM TESTEN DER UMWELTVARIABLEN-FUNKTION !!!
+# Dies muss SOFORT durch os.environ.get("GOOGLE_API_KEY") ersetzt werden, nachdem der Test erfolgreich war.
+GOOGLE_API_KEY = "b14b1464c7591bc3a6d7d374c23d80cd971720d2" 
 
 # Überprüfung: Ist der Key vorhanden (nicht None) und nicht leer
 # Wir prüfen auch, ob es ein Leerstring ist, falls Render ihn so übergibt
@@ -21,9 +23,10 @@ GOOGLE_STT_ENDPOINT = f"https://speech.googleapis.com/v1/speech:recognize?key={G
 
 # WICHTIG: Logging, um den Status des API-Keys zu prüfen
 if API_KEY_VALID:
-    app.logger.info("✅ GOOGLE_API_KEY erfolgreich geladen. Transkription ist aktiv.")
+    app.logger.info("✅ GOOGLE_API_KEY hardcodiert und aktiv.")
 else:
-    app.logger.error("❌ GOOGLE_API_KEY NICHT gefunden oder leer. Transkription ist inaktiv.")
+    # Dieser Fall sollte mit dem Hardcode jetzt nicht mehr eintreten.
+    app.logger.error("❌ GOOGLE_API_KEY NICHT gefunden oder leer.")
 
 
 # Wir embedden den HTML/JS-Inhalt direkt.
@@ -122,6 +125,7 @@ HTML_CONTENT = f"""
             
             // 2. Status prüfen und setzen
             if (apiKeyValid === 'false') {{
+                // Dieser Pfad sollte jetzt nicht mehr ausgeführt werden!
                 updateStatus(
                     "API-SCHLÜSSEL FEHLT. Bitte in Render-Umgebungsvariablen prüfen.", 
                     'text-yellow-400', 
@@ -140,7 +144,7 @@ HTML_CONTENT = f"""
         async function transcribeAudio(base64Audio) {{
             if (apiKeyValid === 'false') {{
                 updateStatus("Transkription blockiert: API-Schlüssel fehlt.", 'text-red-500', 'bg-red-900');
-                resultText.value = "Fehler: Bitte den Google API Key in Render's Umgebungsvariablen setzen.";
+                resultText.value = "Fehler: Der API-Schlüssel ist nicht im Backend hinterlegt.";
                 recordButton.disabled = true; 
                 return;
             }}
