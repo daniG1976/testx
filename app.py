@@ -12,11 +12,19 @@ app = Flask(__name__)
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 
 # Überprüfung: Ist der Key vorhanden (nicht None) und nicht leer
+# Wir prüfen auch, ob es ein Leerstring ist, falls Render ihn so übergibt
 API_KEY_VALID = GOOGLE_API_KEY is not None and GOOGLE_API_KEY.strip() != ""
 
 # API Endpunkt (wird nur verwendet, wenn der Key gültig ist)
 GOOGLE_STT_ENDPOINT = f"https://speech.googleapis.com/v1/speech:recognize?key={GOOGLE_API_KEY}"
 # --- Ende Konfiguration ---
+
+# WICHTIG: Logging, um den Status des API-Keys zu prüfen
+if API_KEY_VALID:
+    app.logger.info("✅ GOOGLE_API_KEY erfolgreich geladen. Transkription ist aktiv.")
+else:
+    app.logger.error("❌ GOOGLE_API_KEY NICHT gefunden oder leer. Transkription ist inaktiv.")
+
 
 # Wir embedden den HTML/JS-Inhalt direkt.
 HTML_CONTENT = f"""
@@ -40,7 +48,8 @@ HTML_CONTENT = f"""
             Direkter Mikrofonzugriff (WebRTC) – **Backend in Python**.
         </p>
         <div id="status-container" class="mb-6 p-4 rounded-lg text-center font-mono transition duration-300 bg-gray-700">
-            <p id="status-text" class="text-lg text-green-400">Status wird geladen...</p>
+            <!-- Leer gelassen, wird sofort von JS gefüllt -->
+            <p id="status-text" class="text-lg text-green-400">...</p>
         </div>
         <div class="flex flex-col space-y-4">
             <button id="record-button" 
@@ -107,14 +116,14 @@ HTML_CONTENT = f"""
         
         // ** Initialisierung: NUR Listener binden und Status setzen **
         (function initApp() {{
-            // 1. Listener binden (muss immer passieren, egal ob API Key da ist oder nicht)
+            // 1. Listener binden 
             recordButton.addEventListener('click', startRecording);
             stopButton.addEventListener('click', stopRecording);
             
             // 2. Status prüfen und setzen
             if (apiKeyValid === 'false') {{
                 updateStatus(
-                    "ACHTUNG: API-SCHLÜSSEL FEHLT! Transkription ist inaktiv.", 
+                    "API-SCHLÜSSEL FEHLT. Bitte in Render-Umgebungsvariablen prüfen.", 
                     'text-yellow-400', 
                     'bg-red-800'
                 );
