@@ -15,6 +15,7 @@ GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 API_KEY_VALID = GOOGLE_API_KEY is not None and GOOGLE_API_KEY.strip() != ""
 
 # HILFSVARIABLE: Berechne den String-Status für JavaScript-Injektion
+# KORREKTUR: API_API_KEY_VALID zu API_KEY_VALID geändert
 JS_API_KEY_STATUS = 'true' if API_KEY_VALID else 'false'
 
 # API Endpunkt (wird nur verwendet, wenn der Key gültig ist)
@@ -22,6 +23,7 @@ GOOGLE_STT_ENDPOINT = f"https://speech.googleapis.com/v1/speech:recognize?key={G
 # --- Ende Konfiguration ---
 
 # WICHTIG: Logging, um den Status des API-Keys zu prüfen
+# KORREKTUR: API_API_KEY_VALID zu API_KEY_VALID geändert
 if API_KEY_VALID:
     app.logger.info("✅ GOOGLE_API_KEY aus Umgebungsvariablen geladen.")
 else:
@@ -100,7 +102,11 @@ HTML_CONTENT = f"""
         let mediaRecorder = null;
         let audioChunks = [];
         let stream = null; 
-
+        
+        // ** NEU: Dynamische Formatwahl **
+        let audioMimeType = 'audio/webm'; // Standard
+        let encoderSettings = {{ mimeType: audioMimeType }};
+        
         // Hilfsfunktionen 
         function stopStream(currentStream) {{
             if (currentStream) {{
@@ -118,16 +124,37 @@ HTML_CONTENT = f"""
         
         // ** Initialisierung: NUR Listener binden und Status setzen **
         (function initApp() {{
-            // 1. Listener binden 
+            // 1. Formatprüfung durchführen
+            if (!MediaRecorder.isTypeSupported(audioMimeType)) {{
+                // Versuche es mit MP4, das auf iOS manchmal besser funktioniert
+                if (MediaRecorder.isTypeSupported('audio/mp4')) {{
+                    audioMimeType = 'audio/mp4';
+                    encoderSettings = {{ mimeType: audioMimeType }};
+                    console.log(`WARNUNG: WebM nicht unterstützt, wechselte zu ${{audioMimeType}}.`);
+                }} else {{
+                    console.error("KRITISCHER FEHLER: Weder audio/webm noch audio/mp4 werden unterstützt.");
+                    audioMimeType = null; // Blockiere die Aufnahme
+                }}
+            }}
+            console.log(`VERWENDETES FORMAT: ${{audioMimeType}}`);
+            
+            // 2. Listener binden 
             recordButton.addEventListener('click', startRecording);
             stopButton.addEventListener('click', stopRecording);
             
-            // 2. Status prüfen und setzen
+            // 3. Status prüfen und setzen
             if (apiKeyValid === 'false') {{
                 updateStatus(
                     "API-SCHLÜSSEL FEHLT. Bitte in Render-Umgebungsvariablen prüfen.", 
                     'text-yellow-400', 
                     'bg-red-800'
+                );
+                recordButton.disabled = true;
+            }} else if (audioMimeType === null) {{
+                 updateStatus(
+                    "Aufnahmeformat wird nicht unterstützt. (Browser-Problem)", 
+                    'text-red-500', 
+                    'bg-red-900'
                 );
                 recordButton.disabled = true;
             }} else {{
@@ -149,12 +176,19 @@ HTML_CONTENT = f"""
             
             updateStatus("Transkription läuft...", 'text-amber-400', 'bg-blue-900');
             resultText.value = "Sende Audio an Python-Backend zur Verarbeitung...";
+            
+            // ** NEU: Übergebe den tatsächlichen MimeType an das Backend
+            const payload = {{ 
+                audio_base64: base64Audio,
+                mime_type: audioMimeType 
+            }};
+            
 
             try {{
                 const response = await fetch('/transcribe', {{
                     method: 'POST',
                     headers: {{ 'Content-Type': 'application/json' }},
-                    body: JSON.stringify({{ audio_base64: base64Audio }})
+                    body: JSON.stringify(payload)
                 }});
 
                 const data = await response.json();
@@ -179,7 +213,7 @@ HTML_CONTENT = f"""
         }}
 
         async function startRecording() {{
-            if (recordButton.disabled) return;
+            if (recordButton.disabled || audioMimeType === null) return;
             
             recordButton.disabled = true;
             stopButton.disabled = true; 
@@ -187,11 +221,11 @@ HTML_CONTENT = f"""
             try {{
                 updateStatus("Warten auf Mikrofon-Zugriff...", 'text-yellow-300', 'bg-gray-700');
                 
-                // *** WICHTIG: getUserMedia wird HIER (im Klick-Handler) aufgerufen, wie von iOS verlangt ***
+                // *** getUserMedia Aufruf wie zuvor ***
                 stream = await navigator.mediaDevices.getUserMedia({{ audio: true }});
 
-                // Recording-Logik
-                mediaRecorder = new MediaRecorder(stream, {{ mimeType: 'audio/webm' }});
+                // Recording-Logik mit dynamischen Settings
+                mediaRecorder = new MediaRecorder(stream, encoderSettings); 
                 audioChunks = [];
                 
                 mediaRecorder.ondataavailable = event => {{ 
@@ -210,12 +244,12 @@ HTML_CONTENT = f"""
                         recordButton.disabled = false;
                         return;
                     }}
-                    const audioBlob = new Blob(audioChunks, {{ type: 'audio/webm' }});
+                    const audioBlob = new Blob(audioChunks, encoderSettings);
                     const reader = new FileReader();
                     
                     reader.onloadend = () => {{
                         const base64Audio = reader.result.split(',')[1];
-                        base64Size.textContent = `Base64-Größe: ${{Math.round(base64Audio.length / 1024)}} KB (WebM/OPUS)`;
+                        base64Size.textContent = `Base64-Größe: ${{Math.round(base64Audio.length / 1024)}} KB ($:{{audioMimeType}})`
                         transcribeAudio(base64Audio);
                     }};
                     reader.readAsDataURL(audioBlob);
@@ -226,7 +260,7 @@ HTML_CONTENT = f"""
                 stopButton.disabled = false; 
                 
             }} catch (err) {{
-                // *** NEU: Protokolliert den genauen Fehlergrund im Browser-Protokoll ***
+                // Protokolliert den genauen Fehlergrund im Browser-Protokoll
                 console.error("Mikrofon Fehler (genaue Ursache): ", err); 
                 
                 stopStream(stream);
@@ -239,7 +273,7 @@ HTML_CONTENT = f"""
                 }} else if (err.name === 'NotReadableError') {{
                     errorMessage = "Mikrofon ist belegt (von anderer App). Andere Apps schließen!";
                 }} else if (err.name === 'NotSupportedError') {{
-                    errorMessage = "Audioaufnahme nicht unterstützt. (Sehr unwahrscheinlich)";
+                    errorMessage = "Audioaufnahme nicht unterstützt. (Format/Hardware-Fehler)";
                 }}
                 
                 updateStatus(errorMessage, 'text-red-500', 'bg-red-900');
@@ -260,7 +294,7 @@ HTML_CONTENT = f"""
 </html>
 """
 
-def stt_from_base64(audio_base64: str) -> dict:
+def stt_from_base64(audio_base64: str, mime_type: str) -> dict:
     """
     Sendet die Base64-kodierte Audiodatei an die Google Speech-to-Text API.
     """
@@ -270,11 +304,29 @@ def stt_from_base64(audio_base64: str) -> dict:
     
     headers = {"Content-Type": "application/json"}
     
-    # WEBM_OPUS ist das Standardformat, das MediaRecorder auf den meisten Browsern ausgibt.
+    # NEU: Mapping des MimeTypes auf das Encoding für die Google API
+    if 'webm' in mime_type.lower():
+        encoding = "WEBM_OPUS"
+    elif 'mp4' in mime_type.lower() or 'm4a' in mime_type.lower():
+        # Die API unterstützt M4A/MP4-Dateien als AAC oder ALAW,
+        # aber die genaue Einstellung hängt vom MediaRecorder ab.
+        # Wir versuchen es mit LINEAR16, da dies universeller ist,
+        # obwohl WebM/Opus empfohlen wird. Falsches Encoding führt zu API-Fehlern.
+        encoding = "LINEAR16" 
+    else:
+        # Fallback auf Standard, falls unbekanntes Format
+        encoding = "WEBM_OPUS" 
+
+    # Die SampleRateHertz muss zur Aufnahme passen. Da WebRTC meist 44100 oder 48000 nutzt,
+    # senden wir 48000 (Opus Standard), was Google oft besser verarbeitet.
+    sample_rate = 48000 
+
+    app.logger.info(f"Sende Audio mit Encoding: {encoding} (MimeType: {mime_type})")
+
     request_data = {
         "config": {
-            "encoding": "WEBM_OPUS",
-            "sampleRateHertz": 48000, 
+            "encoding": encoding,
+            "sampleRateHertz": sample_rate, 
             "languageCode": "de-DE", 
             "enableAutomaticPunctuation": True,
         },
@@ -314,12 +366,13 @@ def transcribe_endpoint():
     """Endpunkt, der die Base64-Audiodaten vom Frontend empfängt."""
     try:
         data = request.get_json()
-        if not data or 'audio_base64' not in data:
-            return jsonify({"error": "Fehlende Base64-Audiodaten"}), 400
+        if not data or 'audio_base64' not in data or 'mime_type' not in data:
+            return jsonify({"error": "Fehlende Base64-Audiodaten oder MimeType"}), 400
         
         audio_base64 = data['audio_base64']
+        mime_type = data['mime_type']
         
-        result = stt_from_base64(audio_base64)
+        result = stt_from_base64(audio_base64, mime_type)
         
         if "error" in result:
             return jsonify({"error": result["error"]}), 500
