@@ -17,6 +17,9 @@ GOOGLE_API_KEY = "b14b1464c7591bc3a6d7d374c23d80cd971720d2"
 # Wir prüfen auch, ob es ein Leerstring ist, falls Render ihn so übergibt
 API_KEY_VALID = GOOGLE_API_KEY is not None and GOOGLE_API_KEY.strip() != ""
 
+# HILFSVARIABLE: Berechne den String-Status für JavaScript-Injektion
+JS_API_KEY_STATUS = 'true' if API_KEY_VALID else 'false'
+
 # API Endpunkt (wird nur verwendet, wenn der Key gültig ist)
 GOOGLE_STT_ENDPOINT = f"https://speech.googleapis.com/v1/speech:recognize?key={GOOGLE_API_KEY}"
 # --- Ende Konfiguration ---
@@ -95,8 +98,8 @@ HTML_CONTENT = f"""
         const base64Size = document.getElementById('base64-size');
         const statusContainer = document.getElementById('status-container');
         
-        // HINWEIS: API-Status vom Python-Backend übernommen.
-        const apiKeyValid = {"{'true' if API_KEY_VALID else 'false'}"}; 
+        // HINWEIS: API-Status vom Python-Backend übernommen. (KORRIGIERT: Saubere String-Injektion)
+        const apiKeyValid = '{JS_API_KEY_STATUS}'; 
 
         let mediaRecorder = null;
         let audioChunks = [];
