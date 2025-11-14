@@ -71,9 +71,11 @@ HTML_CONTENT = f"""
             <p id="base64-size" class="text-xs text-gray-500 mt-2">Base64-Größe: 0 Bytes</p>
         </div>
     </div>
+    <!-- *** WICHTIG: Das Skript wurde ans Ende des Body verschoben, um Timing-Probleme zu vermeiden. *** -->
     <script>
         // *** Frontend-Logik ***
         
+        // Da das Skript am Ende des Body platziert ist, sind diese Elemente GARANTIERT verfügbar.
         const statusText = document.getElementById('status-text');
         const recordButton = document.getElementById('record-button');
         const stopButton = document.getElementById('stop-button');
@@ -103,8 +105,7 @@ HTML_CONTENT = f"""
             statusText.className = colorClass;
         }}
         
-        // ** KORREKTUR: Robuste, sofortige Initialisierung außerhalb jedes Events **
-        // Führt die Logik aus, sobald das Skript geladen ist (was bei inlined JS sofort passiert).
+        // ** Initialisierung: Sofortige, garantierte Bindung der Event-Listener **
         (function initApp() {{
             recordButton.addEventListener('click', startRecording);
             stopButton.addEventListener('click', stopRecording);
@@ -117,19 +118,40 @@ HTML_CONTENT = f"""
                 );
                 recordButton.disabled = true;
             }} else {{
-                 updateStatus("Bereit. Klicken Sie auf Aufnahme starten.", 'text-green-400', 'bg-gray-700');
+                 // Nur fortfahren, wenn der API Key vorhanden ist
+                 initRecorder();
             }}
         }})();
-        // ** ENDE KORREKTUR **
+        // ** ENDE Initialisierung **
+        
+        async function initRecorder() {{
+            try {{
+                // Fragt nach der Mikrofonberechtigung, um den Status zu prüfen
+                stream = await navigator.mediaDevices.getUserMedia({{ audio: true }});
+                stopStream(stream); // Stream sofort stoppen, damit die rote Aufnahmelampe nicht leuchtet
+                stream = null; 
+                
+                updateStatus("Bereit. Klicken Sie auf Aufnahme starten.", 'text-green-400', 'bg-gray-700');
+                recordButton.disabled = false;
+                
+            }} catch (err) {{
+                // Fehler beim ersten Zugriff (wird nur einmal beim Laden der Seite ausgeführt)
+                let errorMessage = "Zugriff auf Mikrofon verweigert. Berechtigungen prüfen.";
+                if (err.name === 'NotAllowedError') {{
+                    errorMessage = "Zugriff verweigert (NotAllowedError). Einstellungen prüfen!";
+                }}
+                updateStatus(errorMessage, 'text-red-500', 'bg-red-900');
+                recordButton.disabled = true;
+            }}
+        }}
 
 
         async function transcribeAudio(base64Audio) {{
+            // (Die API-Schlüsselprüfung hier ist redundant, aber sicher)
             if (apiKeyValid === 'false') {{
                 updateStatus("Transkription blockiert: API-Schlüssel fehlt.", 'text-red-500', 'bg-red-900');
                 resultText.value = "Fehler: Bitte den Google API Key in Render's Umgebungsvariablen setzen.";
-                stopStream(stream);
-                stream = null;
-                recordButton.disabled = true; // Bleibt disabled, da Key fehlt
+                recordButton.disabled = true; 
                 return;
             }}
             
@@ -160,8 +182,7 @@ HTML_CONTENT = f"""
                 updateStatus("Netzwerkfehler", 'text-red-500', 'bg-red-900');
             }}
             
-            stopStream(stream);
-            stream = null; 
+            // UI zurücksetzen und Button freigeben
             recordButton.disabled = false;
         }}
 
@@ -174,7 +195,7 @@ HTML_CONTENT = f"""
             try {{
                 updateStatus("Warten auf Mikrofon-Zugriff...", 'text-yellow-300', 'bg-gray-700');
                 
-                // Hier erfolgt die eigentliche Mikrofon-Anfrage, ausgelöst durch den Klick
+                // Erneute Mikrofon-Anfrage, ausgelöst durch den Klick
                 stream = await navigator.mediaDevices.getUserMedia({{ audio: true }});
 
                 mediaRecorder = new MediaRecorder(stream, {{ mimeType: 'audio/webm' }});
@@ -187,11 +208,13 @@ HTML_CONTENT = f"""
                 }};
 
                 mediaRecorder.onstop = () => {{
+                    // Sofort stream stoppen, wenn Aufnahme beendet ist
+                    stopStream(stream);
+                    stream = null; 
+                    
                     if (audioChunks.length === 0) {{
                         updateStatus("Aufnahme zu kurz oder leer. Versuchen Sie es erneut.", 'text-red-500', 'bg-red-900');
                         recordButton.disabled = false;
-                        stopStream(stream); 
-                        stream = null;
                         return;
                     }}
                     const audioBlob = new Blob(audioChunks, {{ type: 'audio/webm' }});
@@ -210,19 +233,11 @@ HTML_CONTENT = f"""
                 stopButton.disabled = false; 
                 
             }} catch (err) {{
-                // Dieser Block fängt alle Fehler beim Mikrofon-Zugriff
                 console.error("Mikrofon Fehler: ", err);
-                
                 stopStream(stream);
                 stream = null; 
                 
-                let errorMessage = "Zugriff auf Mikrofon verweigert. Bitte Berechtigungen prüfen.";
-                if (err.name === 'NotAllowedError') {{
-                    errorMessage = "Zugriff verweigert (NotAllowedError). Einstellungen prüfen!";
-                }} else if (err.name === 'NotFoundError') {{
-                    errorMessage = "Kein Mikrofon gefunden (NotFoundError).";
-                }}
-                
+                let errorMessage = "Zugriff auf Mikrofon verweigert. Einstellungen prüfen!";
                 updateStatus(errorMessage, 'text-red-500', 'bg-red-900');
                 recordButton.disabled = false; 
             }}
@@ -234,6 +249,7 @@ HTML_CONTENT = f"""
             }}
             stopButton.disabled = true;
             updateStatus("Aufnahme beendet. Verarbeite...", 'text-yellow-300', 'bg-gray-700');
+            // Die Transkriptionslogik wird im mediaRecorder.onstop-Handler fortgesetzt.
         }}
 
     </script>
@@ -251,6 +267,7 @@ def stt_from_base64(audio_base64: str) -> dict:
     
     headers = {"Content-Type": "application/json"}
     
+    # WEBM_OPUS ist das Standardformat, das MediaRecorder auf den meisten Browsern ausgibt.
     request_data = {
         "config": {
             "encoding": "WEBM_OPUS",
@@ -264,6 +281,7 @@ def stt_from_base64(audio_base64: str) -> dict:
     }
 
     try:
+        # Synchrone API-Anfrage
         response = httpx.post(GOOGLE_STT_ENDPOINT, headers=headers, json=request_data, timeout=30)
         response.raise_for_status() 
 
