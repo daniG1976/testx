@@ -8,27 +8,21 @@ import base64
 app = Flask(__name__)
 
 # --- API Konfiguration ---
-# SICHERE VERSION: Lese den API Key aus den Umgebungsvariablen von Render
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 
-# Überprüfung: Ist der Key vorhanden (nicht None) und nicht leer
 API_KEY_VALID = GOOGLE_API_KEY is not None and GOOGLE_API_KEY.strip() != ""
-
-# HILFSVARIABLE: Berechne den String-Status für JavaScript-Injektion
 JS_API_KEY_STATUS = 'true' if API_KEY_VALID else 'false'
 
-# API Endpunkt (wird nur verwendet, wenn der Key gültig ist)
 GOOGLE_STT_ENDPOINT = f"https://speech.googleapis.com/v1/speech:recognize?key={GOOGLE_API_KEY}"
 # --- Ende Konfiguration ---
 
-# WICHTIG: Logging, um den Status des API-Keys zu prüfen
 if API_KEY_VALID:
     app.logger.info("✅ GOOGLE_API_KEY aus Umgebungsvariablen geladen.")
 else:
     app.logger.error("❌ GOOGLE_API_KEY NICHT gefunden oder leer.")
 
 
-# Wir embedden den HTML/JS-Inhalt direkt.
+# Wir embedden den HTML/JS-Inhalt direkt. (Unverändert)
 HTML_CONTENT = f"""
 <!DOCTYPE html>
 <html lang="de">
@@ -197,8 +191,9 @@ HTML_CONTENT = f"""
                     resultText.value = transcript;
                     updateStatus("Transkription abgeschlossen!", 'text-green-400', 'bg-green-900');
                 }} else {{
+                    // Zeigt den detaillierten Fehler vom Python-Backend an
                     const errorMessage = data.error || "Unbekannter Fehler im Python-Backend.";
-                    resultText.value = `Fehler: ${{errorMessage}}`;
+                    resultText.value = `FEHLER: ${{errorMessage}}`;
                     updateStatus("API-Fehler", 'text-red-500', 'bg-red-900');
                 }}
                 
@@ -308,11 +303,9 @@ def stt_from_base64(audio_base64: str, mime_type: str) -> dict:
         encoding = "WEBM_OPUS"
         sample_rate = 48000
     elif 'mp4' in mime_type.lower() or 'm4a' in mime_type.lower():
-        # FIX für 400 BAD REQUEST auf iOS/MP4: 
-        # Da iOS MP4 in der Regel AAC-komprimiert ist, müssen wir Google mitteilen, 
-        # das Encoding selbst zu bestimmen, um den Mismatch zu vermeiden.
+        # Beste Strategie für iOS/MP4, da das genaue AAC-Encoding unbekannt ist
         encoding = "ENCODING_UNSPECIFIED" 
-        sample_rate = 0 # 0 bedeutet, Google erkennt die Rate automatisch
+        sample_rate = 0 
     else:
         # Fallback auf Standard, falls unbekanntes Format
         encoding = "WEBM_OPUS" 
@@ -323,7 +316,7 @@ def stt_from_base64(audio_base64: str, mime_type: str) -> dict:
     request_data = {
         "config": {
             "encoding": encoding,
-            "sampleRateHertz": sample_rate if sample_rate > 0 else None, # Nur senden, wenn > 0
+            # Füge sampleRateHertz nur ein, wenn es > 0 ist (für ENCODING_UNSPECIFIED weglassen)
             "languageCode": "de-DE", 
             "enableAutomaticPunctuation": True,
         },
@@ -331,14 +324,13 @@ def stt_from_base64(audio_base64: str, mime_type: str) -> dict:
             "content": audio_base64
         }
     }
-    # Entferne den Eintrag, wenn sampleRateHertz None ist (für ENCODING_UNSPECIFIED)
-    if request_data['config']['sampleRateHertz'] is None:
-        del request_data['config']['sampleRateHertz']
-
+    if sample_rate > 0:
+         request_data['config']['sampleRateHertz'] = sample_rate
 
     try:
         # Synchrone API-Anfrage
         response = httpx.post(GOOGLE_STT_ENDPOINT, headers=headers, json=request_data, timeout=30)
+        # 1. PRÜFUNG: Wenn Google einen 4xx/5xx-Status sendet (z.B. 400 Bad Request)
         response.raise_for_status() 
 
         result = response.json()
@@ -347,17 +339,33 @@ def stt_from_base64(audio_base64: str, mime_type: str) -> dict:
             transcript = result['results'][0]['alternatives'][0]['transcript']
             return {"transcript": transcript}
         elif 'error' in result:
-            return {"error": f"Google API Fehler: {result['error'].get('message', 'Unbekannt')}"}
+            return {"error": f"Google API Fehler (Antwort ohne Transkript): {result['error'].get('message', 'Unbekannt')}"}
         else:
             return {"error": "Konnte keine Sprache erkennen (Zu leise oder zu kurz)."}
         
+    except httpx.HTTPStatusError as e:
+        # ** NEUE DIAGNOSE: Fängt den Statuscode (z.B. 400) ab und liest den detaillierten Fehler
+        status_code = e.response.status_code
+        google_error_message = f"Fehler {status_code}: Unerwartete Antwort vom Server."
+        
+        try:
+            # Versuche, die spezifische Fehlermeldung aus dem Google JSON Body zu extrahieren
+            error_details = e.response.json()
+            google_error_message = error_details.get('error', {}).get('message', google_error_message)
+        except json.JSONDecodeError:
+            google_error_message = f"Fehler {status_code}: Konnte Details nicht aus der Antwort extrahieren. Antwort-Anfang: {e.response.text[:100]}..."
+            
+        app.logger.error(f"HTTP-Statusfehler: {google_error_message}")
+        return {"error": f"Google API-Fehler ({status_code}): {google_error_message}"}
+
     except httpx.RequestError as e:
-        # Füge die genaue Fehlermeldung des Clients bei
-        client_error = f"Client error \"{e}\""
-        return {"error": f"Unerwarteter Fehler während der Transkription. {client_error} For more information check: https://developer.mozilla.org/en-"}
+        # Fängt Netzwerkprobleme ab (keine Antwort, Timeout)
+        return {"error": f"Netzwerk- oder Verbindungsproblem: Konnte API-Endpunkt nicht erreichen. ({e})"}
 
     except Exception as e:
-        return {"error": f"Unerwarteter Fehler während der Transkription: {e}"}
+        # Fängt alle anderen, unerwarteten Fehler ab
+        app.logger.error(f"Unerwarteter Fehler: {e}")
+        return {"error": f"Unerwarteter Fehler im Backend: {e}"}
 
 
 @app.route('/')
