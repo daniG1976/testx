@@ -15,7 +15,6 @@ GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 API_KEY_VALID = GOOGLE_API_KEY is not None and GOOGLE_API_KEY.strip() != ""
 
 # HILFSVARIABLE: Berechne den String-Status für JavaScript-Injektion
-# KORREKTUR: API_API_KEY_VALID zu API_KEY_VALID geändert
 JS_API_KEY_STATUS = 'true' if API_KEY_VALID else 'false'
 
 # API Endpunkt (wird nur verwendet, wenn der Key gültig ist)
@@ -23,7 +22,6 @@ GOOGLE_STT_ENDPOINT = f"https://speech.googleapis.com/v1/speech:recognize?key={G
 # --- Ende Konfiguration ---
 
 # WICHTIG: Logging, um den Status des API-Keys zu prüfen
-# KORREKTUR: API_API_KEY_VALID zu API_KEY_VALID geändert
 if API_KEY_VALID:
     app.logger.info("✅ GOOGLE_API_KEY aus Umgebungsvariablen geladen.")
 else:
@@ -104,7 +102,8 @@ HTML_CONTENT = f"""
         let stream = null; 
         
         // ** NEU: Dynamische Formatwahl **
-        let audioMimeType = 'audio/webm'; // Standard
+        // 1. Priorität: WebM/Opus (am effizientesten)
+        let audioMimeType = 'audio/webm;codecs=opus'; 
         let encoderSettings = {{ mimeType: audioMimeType }};
         
         // Hilfsfunktionen 
@@ -126,13 +125,13 @@ HTML_CONTENT = f"""
         (function initApp() {{
             // 1. Formatprüfung durchführen
             if (!MediaRecorder.isTypeSupported(audioMimeType)) {{
-                // Versuche es mit MP4, das auf iOS manchmal besser funktioniert
+                // 2. Priorität: Versuche es mit MP4, das auf iOS am gängigsten ist
                 if (MediaRecorder.isTypeSupported('audio/mp4')) {{
                     audioMimeType = 'audio/mp4';
                     encoderSettings = {{ mimeType: audioMimeType }};
-                    console.log(`WARNUNG: WebM nicht unterstützt, wechselte zu ${{audioMimeType}}.`);
+                    console.log(`WARNUNG: WebM/Opus nicht unterstützt, wechselte zu ${{audioMimeType}}.`);
                 }} else {{
-                    console.error("KRITISCHER FEHLER: Weder audio/webm noch audio/mp4 werden unterstützt.");
+                    console.error("KRITISCHER FEHLER: Weder WebM/Opus noch audio/mp4 werden unterstützt.");
                     audioMimeType = null; // Blockiere die Aufnahme
                 }}
             }}
@@ -307,26 +306,24 @@ def stt_from_base64(audio_base64: str, mime_type: str) -> dict:
     # NEU: Mapping des MimeTypes auf das Encoding für die Google API
     if 'webm' in mime_type.lower():
         encoding = "WEBM_OPUS"
+        sample_rate = 48000
     elif 'mp4' in mime_type.lower() or 'm4a' in mime_type.lower():
-        # Die API unterstützt M4A/MP4-Dateien als AAC oder ALAW,
-        # aber die genaue Einstellung hängt vom MediaRecorder ab.
-        # Wir versuchen es mit LINEAR16, da dies universeller ist,
-        # obwohl WebM/Opus empfohlen wird. Falsches Encoding führt zu API-Fehlern.
-        encoding = "LINEAR16" 
+        # FIX für 400 BAD REQUEST auf iOS/MP4: 
+        # Da iOS MP4 in der Regel AAC-komprimiert ist, müssen wir Google mitteilen, 
+        # das Encoding selbst zu bestimmen, um den Mismatch zu vermeiden.
+        encoding = "ENCODING_UNSPECIFIED" 
+        sample_rate = 0 # 0 bedeutet, Google erkennt die Rate automatisch
     else:
         # Fallback auf Standard, falls unbekanntes Format
         encoding = "WEBM_OPUS" 
+        sample_rate = 48000
 
-    # Die SampleRateHertz muss zur Aufnahme passen. Da WebRTC meist 44100 oder 48000 nutzt,
-    # senden wir 48000 (Opus Standard), was Google oft besser verarbeitet.
-    sample_rate = 48000 
-
-    app.logger.info(f"Sende Audio mit Encoding: {encoding} (MimeType: {mime_type})")
+    app.logger.info(f"Sende Audio mit Encoding: {encoding} (MimeType: {mime_type}, SampleRate: {sample_rate})")
 
     request_data = {
         "config": {
             "encoding": encoding,
-            "sampleRateHertz": sample_rate, 
+            "sampleRateHertz": sample_rate if sample_rate > 0 else None, # Nur senden, wenn > 0
             "languageCode": "de-DE", 
             "enableAutomaticPunctuation": True,
         },
@@ -334,6 +331,10 @@ def stt_from_base64(audio_base64: str, mime_type: str) -> dict:
             "content": audio_base64
         }
     }
+    # Entferne den Eintrag, wenn sampleRateHertz None ist (für ENCODING_UNSPECIFIED)
+    if request_data['config']['sampleRateHertz'] is None:
+        del request_data['config']['sampleRateHertz']
+
 
     try:
         # Synchrone API-Anfrage
@@ -351,7 +352,10 @@ def stt_from_base64(audio_base64: str, mime_type: str) -> dict:
             return {"error": "Konnte keine Sprache erkennen (Zu leise oder zu kurz)."}
         
     except httpx.RequestError as e:
-        return {"error": f"Verbindungsfehler zur Google API: {e}"}
+        # Füge die genaue Fehlermeldung des Clients bei
+        client_error = f"Client error \"{e}\""
+        return {"error": f"Unerwarteter Fehler während der Transkription. {client_error} For more information check: https://developer.mozilla.org/en-"}
+
     except Exception as e:
         return {"error": f"Unerwarteter Fehler während der Transkription: {e}"}
 
