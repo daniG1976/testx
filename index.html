@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC Audio Recorder & Transcriber</title>
+    <!-- Lade Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Angepasster Font für besseren Look */
+        body { font-family: 'Inter', sans-serif; }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen flex items-center justify-center p-4">
+    <div class="w-full max-w-md bg-gray-800 rounded-xl shadow-2xl p-6 md:p-8">
+        <h1 class="text-3xl font-bold text-center text-blue-400 mb-2">
+            🎙️ Audio Recorder & Transcriber
+        </h1>
+        <p class="text-center text-gray-400 mb-6">
+            Direkter Mikrofonzugriff (WebRTC) – **Backend in Python**.
+        </p>
+
+        <!-- Status & Aufnahme-Anzeige -->
+        <div id="status-container" class="mb-6 p-4 rounded-lg text-center font-mono transition duration-300 bg-gray-700">
+            <p id="status-text" class="text-lg text-yellow-300">Warten auf Mikrofonberechtigung...</p>
+        </div>
+
+        <!-- Steuerelemente -->
+        <div class="flex flex-col space-y-4">
+            <button id="record-button" 
+                    class="flex items-center justify-center space-x-2 px-6 py-3 text-lg font-semibold rounded-lg shadow-lg 
+                           bg-green-600 hover:bg-green-700 transition duration-150 disabled:opacity-50"
+                    disabled>
+                <svg id="record-icon" class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd" />
+                </svg>
+                <span id="record-label">Aufnahme starten</span>
+            </button>
+            
+            <button id="stop-button" 
+                    class="flex items-center justify-center space-x-2 px-6 py-3 text-lg font-semibold rounded-lg shadow-lg 
+                           bg-red-600 hover:bg-red-700 transition duration-150 disabled:opacity-50"
+                    disabled>
+                <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M5 4a1 1 0 00-1 1v10a1 1 0 001 1h10a1 1 0 001-1V5a1 1 0 00-1-1H5z" />
+                </svg>
+                Aufnahme stoppen
+            </button>
+        </div>
+
+        <!-- Ergebnis-Container -->
+        <div class="mt-8">
+            <h2 class="text-xl font-semibold mb-3 text-gray-300">Transkriptionsergebnis</h2>
+            <textarea id="result-text" readonly 
+                      class="w-full h-40 p-3 rounded-lg bg-gray-900 border border-gray-700 text-gray-200 resize-none 
+                             focus:border-blue-500 transition duration-150"
+                      placeholder="Transkription wird hier angezeigt..."></textarea>
+            <p id="base64-size" class="text-xs text-gray-500 mt-2">Base64-Größe: 0 Bytes</p>
+        </div>
+    </div>
+
+    <script>
+        // *** Frontend-Logik: Aufnahme, Base64-Kodierung & Senden an Python-Backend ***
+        
+        // Konstanten für UI-Elemente
+        const statusText = document.getElementById('status-text');
+        const recordButton = document.getElementById('record-button');
+        const stopButton = document.getElementById('stop-button');
+        const resultText = document.getElementById('result-text');
+        const base64Size = document.getElementById('base64-size');
+        const statusContainer = document.getElementById('status-container');
+
+        let mediaRecorder;
+        let audioChunks = [];
+        let stream;
+        
+        // Versucht zuerst MP4 (besser für iOS/Safari) und fällt auf WebM zurück
+        // WICHTIG: Die Wahl hier wird an das Backend gesendet, um das korrekte Google-Encoding zu setzen.
+        const preferredMimeType = MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : 'audio/webm';
+
+
+        // --- HILFSFUNKTIONEN ---
+
+        function updateStatus(message, colorClass = 'text-yellow-300', bgClass = 'bg-gray-700') {
+            statusText.textContent = message;
+            statusContainer.className = `mb-6 p-4 rounded-lg text-center font-mono transition duration-300 ${bgClass}`;
+            statusText.className = colorClass;
+        }
+
+        async function transcribeAudio(base64Audio, mimeType) {
+            updateStatus("Transkription läuft...", 'text-amber-400', 'bg-blue-900');
+            resultText.value = "Sende Audio an Python-Backend zur Verarbeitung...";
+
+            try {
+                // Sendet die Base64-Audiodaten und den MimeType an den Flask-Endpunkt
+                const response = await fetch('/transcribe', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    // WICHTIG: Senden des MimeType an das Backend
+                    body: JSON.stringify({ audio_base64: base64Audio, mime_type: mimeType })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    // Erfolgreiche Transkription vom Python-Backend
+                    const transcript = data.transcript;
+                    resultText.value = transcript;
+                    updateStatus("Transkription abgeschlossen!", 'text-green-500', 'bg-green-900');
+                } else {
+                    // Fehler vom Python-Backend
+                    const errorMessage = data.error || "Unbekannter Fehler im Python-Backend.";
+                    resultText.value = `Fehler: ${errorMessage}`;
+                    updateStatus("API-Fehler", 'text-red-500', 'bg-red-900');
+                }
+                
+            } catch (error) {
+                resultText.value = `Netzwerkfehler: Konnte Python-Backend nicht erreichen. (${error.message})`;
+                updateStatus("Netzwerkfehler", 'text-red-500', 'bg-red-900');
+            }
+        }
+
+        // --- WEBRTC LOGIK ---
+
+        function startRecording() {
+            if (!stream) {
+                updateStatus("Fehler: Mikrofon-Stream nicht verfügbar.", 'text-red-500', 'bg-red-900');
+                return;
+            }
+            
+            // Verwende den bevorzugten MimeType
+            mediaRecorder = new MediaRecorder(stream, { mimeType: preferredMimeType });
+            audioChunks = [];
+            
+            mediaRecorder.ondataavailable = event => {
+                audioChunks.push(event.data);
+            };
+
+            mediaRecorder.onstop = () => {
+                const mimeType = mediaRecorder.mimeType; // Nimmt den tatsächlich verwendeten MimeType
+                const audioBlob = new Blob(audioChunks, { type: mimeType });
+                const reader = new FileReader();
+                
+                reader.onloadend = () => {
+                    // Base64-Kodierung (teilt den Data-URL-Header ab)
+                    const base64Audio = reader.result.split(',')[1];
+                    
+                    // Größe anzeigen
+                    base64Size.textContent = `Base64-Größe: ${Math.round(base64Audio.length / 1024)} KB (${mimeType})`;
+
+                    // Hier wird der Transkriptionsprozess gestartet
+                    transcribeAudio(base64Audio, mimeType);
+                };
+                reader.readAsDataURL(audioBlob);
+            };
+
+            mediaRecorder.start();
+            updateStatus("Aufnahme läuft... (Klicken Sie auf Stopp)", 'text-red-500', 'bg-red-900');
+            recordButton.disabled = true;
+            stopButton.disabled = false;
+        }
+
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+            }
+            stopButton.disabled = true;
+            recordButton.disabled = false;
+            // updateStatus wird nach onstop von mediaRecorder aufgerufen
+        }
+
+        // --- INITIALISIERUNG ---
+
+        async function initRecorder() {
+            try {
+                // Fragt nach der Mikrofonberechtigung
+                stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                updateStatus(`Mikrofon bereit. Aufnahme starten (Bevorzugtes Format: ${preferredMimeType}).`, 'text-green-400', 'bg-gray-700');
+                recordButton.disabled = false;
+                
+                recordButton.addEventListener('click', startRecording);
+                stopButton.addEventListener('click', stopRecording);
+
+            } catch (err) {
+                console.error("Fehler beim Zugriff auf das Mikrofon: ", err);
+                updateStatus("Zugriff auf Mikrofon verweigert. Bitte Berechtigungen prüfen.", 'text-red-500', 'bg-red-900');
+                recordButton.disabled = true;
+            }
+        }
+
+        window.onload = initRecorder;
+
+    </script>
+</body>
+</html>
