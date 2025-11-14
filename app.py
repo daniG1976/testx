@@ -46,7 +46,7 @@ HTML_CONTENT = f"""
             <button id="record-button" 
                     class="flex items-center justify-center space-x-2 px-6 py-3 text-lg font-semibold rounded-lg shadow-lg 
                            bg-green-600 hover:bg-green-700 transition duration-150"
-                    >
+                    disabled>
                 <svg id="record-icon" class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
                     <path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd" />
                 </svg>
@@ -71,11 +71,11 @@ HTML_CONTENT = f"""
             <p id="base64-size" class="text-xs text-gray-500 mt-2">Base64-Größe: 0 Bytes</p>
         </div>
     </div>
-    <!-- *** WICHTIG: Das Skript wurde ans Ende des Body verschoben, um Timing-Probleme zu vermeiden. *** -->
+    <!-- *** Skript am Ende des Body für korrekte Element-Initialisierung (iOS-Fix) *** -->
     <script>
         // *** Frontend-Logik ***
         
-        // Da das Skript am Ende des Body platziert ist, sind diese Elemente GARANTIERT verfügbar.
+        // Elemente sind GARANTIERT verfügbar
         const statusText = document.getElementById('status-text');
         const recordButton = document.getElementById('record-button');
         const stopButton = document.getElementById('stop-button');
@@ -105,11 +105,13 @@ HTML_CONTENT = f"""
             statusText.className = colorClass;
         }}
         
-        // ** Initialisierung: Sofortige, garantierte Bindung der Event-Listener **
+        // ** Initialisierung: NUR Listener binden und Status setzen **
         (function initApp() {{
+            // 1. Listener binden (muss immer passieren, egal ob API Key da ist oder nicht)
             recordButton.addEventListener('click', startRecording);
             stopButton.addEventListener('click', stopRecording);
             
+            // 2. Status prüfen und setzen
             if (apiKeyValid === 'false') {{
                 updateStatus(
                     "ACHTUNG: API-SCHLÜSSEL FEHLT! Transkription ist inaktiv.", 
@@ -118,36 +120,15 @@ HTML_CONTENT = f"""
                 );
                 recordButton.disabled = true;
             }} else {{
-                 // Nur fortfahren, wenn der API Key vorhanden ist
-                 initRecorder();
+                 // Setzt den Zustand auf "Bereit" und aktiviert den Button
+                 updateStatus("Bereit. Klicken Sie auf Aufnahme starten.", 'text-green-400', 'bg-gray-700');
+                 recordButton.disabled = false; // EXPLIZIT Button freischalten
             }}
         }})();
         // ** ENDE Initialisierung **
-        
-        async function initRecorder() {{
-            try {{
-                // Fragt nach der Mikrofonberechtigung, um den Status zu prüfen
-                stream = await navigator.mediaDevices.getUserMedia({{ audio: true }});
-                stopStream(stream); // Stream sofort stoppen, damit die rote Aufnahmelampe nicht leuchtet
-                stream = null; 
-                
-                updateStatus("Bereit. Klicken Sie auf Aufnahme starten.", 'text-green-400', 'bg-gray-700');
-                recordButton.disabled = false;
-                
-            }} catch (err) {{
-                // Fehler beim ersten Zugriff (wird nur einmal beim Laden der Seite ausgeführt)
-                let errorMessage = "Zugriff auf Mikrofon verweigert. Berechtigungen prüfen.";
-                if (err.name === 'NotAllowedError') {{
-                    errorMessage = "Zugriff verweigert (NotAllowedError). Einstellungen prüfen!";
-                }}
-                updateStatus(errorMessage, 'text-red-500', 'bg-red-900');
-                recordButton.disabled = true;
-            }}
-        }}
 
 
         async function transcribeAudio(base64Audio) {{
-            // (Die API-Schlüsselprüfung hier ist redundant, aber sicher)
             if (apiKeyValid === 'false') {{
                 updateStatus("Transkription blockiert: API-Schlüssel fehlt.", 'text-red-500', 'bg-red-900');
                 resultText.value = "Fehler: Bitte den Google API Key in Render's Umgebungsvariablen setzen.";
@@ -195,9 +176,10 @@ HTML_CONTENT = f"""
             try {{
                 updateStatus("Warten auf Mikrofon-Zugriff...", 'text-yellow-300', 'bg-gray-700');
                 
-                // Erneute Mikrofon-Anfrage, ausgelöst durch den Klick
+                // *** WICHTIG: getUserMedia wird HIER (im Klick-Handler) aufgerufen, wie von iOS verlangt ***
                 stream = await navigator.mediaDevices.getUserMedia({{ audio: true }});
 
+                // Recording-Logik
                 mediaRecorder = new MediaRecorder(stream, {{ mimeType: 'audio/webm' }});
                 audioChunks = [];
                 
@@ -233,6 +215,7 @@ HTML_CONTENT = f"""
                 stopButton.disabled = false; 
                 
             }} catch (err) {{
+                // Dieser Block fängt alle Fehler beim Mikrofon-Zugriff (nach dem Klick)
                 console.error("Mikrofon Fehler: ", err);
                 stopStream(stream);
                 stream = null; 
@@ -249,7 +232,6 @@ HTML_CONTENT = f"""
             }}
             stopButton.disabled = true;
             updateStatus("Aufnahme beendet. Verarbeite...", 'text-yellow-300', 'bg-gray-700');
-            // Die Transkriptionslogik wird im mediaRecorder.onstop-Handler fortgesetzt.
         }}
 
     </script>
