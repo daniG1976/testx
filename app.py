@@ -8,13 +8,10 @@ import base64
 app = Flask(__name__)
 
 # --- API Konfiguration ---
-# Lese den API Key aus den Umgebungsvariablen von Render
-# !!! ACHTUNG: TEMPORÄRER HARDCODE ZUM TESTEN DER UMWELTVARIABLEN-FUNKTION !!!
-# Dies muss SOFORT durch os.environ.get("GOOGLE_API_KEY") ersetzt werden, nachdem der Test erfolgreich war.
-GOOGLE_API_KEY = "b14b1464c7591bc3a6d7d374c23d80cd971720d2" 
+# SICHERE VERSION: Lese den API Key aus den Umgebungsvariablen von Render
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 
 # Überprüfung: Ist der Key vorhanden (nicht None) und nicht leer
-# Wir prüfen auch, ob es ein Leerstring ist, falls Render ihn so übergibt
 API_KEY_VALID = GOOGLE_API_KEY is not None and GOOGLE_API_KEY.strip() != ""
 
 # HILFSVARIABLE: Berechne den String-Status für JavaScript-Injektion
@@ -26,9 +23,8 @@ GOOGLE_STT_ENDPOINT = f"https://speech.googleapis.com/v1/speech:recognize?key={G
 
 # WICHTIG: Logging, um den Status des API-Keys zu prüfen
 if API_KEY_VALID:
-    app.logger.info("✅ GOOGLE_API_KEY hardcodiert und aktiv.")
+    app.logger.info("✅ GOOGLE_API_KEY aus Umgebungsvariablen geladen.")
 else:
-    # Dieser Fall sollte mit dem Hardcode jetzt nicht mehr eintreten.
     app.logger.error("❌ GOOGLE_API_KEY NICHT gefunden oder leer.")
 
 
@@ -98,7 +94,7 @@ HTML_CONTENT = f"""
         const base64Size = document.getElementById('base64-size');
         const statusContainer = document.getElementById('status-container');
         
-        // HINWEIS: API-Status vom Python-Backend übernommen. (KORRIGIERT: Saubere String-Injektion)
+        // HINWEIS: API-Status vom Python-Backend übernommen.
         const apiKeyValid = '{JS_API_KEY_STATUS}'; 
 
         let mediaRecorder = null;
@@ -128,7 +124,6 @@ HTML_CONTENT = f"""
             
             // 2. Status prüfen und setzen
             if (apiKeyValid === 'false') {{
-                // Dieser Pfad sollte jetzt nicht mehr ausgeführt werden!
                 updateStatus(
                     "API-SCHLÜSSEL FEHLT. Bitte in Render-Umgebungsvariablen prüfen.", 
                     'text-yellow-400', 
@@ -231,12 +226,22 @@ HTML_CONTENT = f"""
                 stopButton.disabled = false; 
                 
             }} catch (err) {{
-                // Dieser Block fängt alle Fehler beim Mikrofon-Zugriff (nach dem Klick)
-                console.error("Mikrofon Fehler: ", err);
+                // *** NEU: Protokolliert den genauen Fehlergrund im Browser-Protokoll ***
+                console.error("Mikrofon Fehler (genaue Ursache): ", err); 
+                
                 stopStream(stream);
                 stream = null; 
                 
                 let errorMessage = "Zugriff auf Mikrofon verweigert. Einstellungen prüfen!";
+                // Wenn der Fehler ein spezifischer ist, zeigen wir dies an
+                if (err.name === 'NotAllowedError') {{
+                    errorMessage = "Zugriff verweigert (vom Nutzer oder OS). Bitte Browser-/Geräteeinstellungen prüfen!";
+                }} else if (err.name === 'NotReadableError') {{
+                    errorMessage = "Mikrofon ist belegt (von anderer App). Andere Apps schließen!";
+                }} else if (err.name === 'NotSupportedError') {{
+                    errorMessage = "Audioaufnahme nicht unterstützt. (Sehr unwahrscheinlich)";
+                }}
+                
                 updateStatus(errorMessage, 'text-red-500', 'bg-red-900');
                 recordButton.disabled = false; 
             }}
